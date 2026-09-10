@@ -213,4 +213,4 @@ python -m ruff check .
 
 ## 与设计文档的关系
 
-产品与技术设计见同级目录下的 `qq-bridge-main/docs/PRODUCT_DESIGN.md` 和 `qq-bridge-main/docs/TECHNICAL_DESIGN.md`；本目录是依照该方案实现的 Python MVP。
+当前实现的设计依据集中在 `docs/design-contracts/` 和 `docs/decisions/`；旧版 qq-bridge 设计文档不随本仓库分发，也不是运行前置依赖。

@@ -27,7 +27,6 @@ QQF 是一个自托管的 QQ 仿真群友运行时，目标是在小群里表现
 
 - README.md：当前运行方式和配置。
 - docs/PROJECT_REPORT.md：已知问题清单和完成度。
-- docs/PRODUCT_DESIGN.md 与 docs/TECHNICAL_DESIGN.md：产品与技术方向。
 - docs/design-contracts/README.md：已确认和待确认的功能契约。
 - docs/decisions/README.md：方向性决策记录。
 - 目标模块和其测试：沿用现有模式，不要另起一套风格。

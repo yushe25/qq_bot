@@ -113,7 +113,7 @@ console              FastAPI API + WS 实时流 + 单页控制台
 11. ~~依赖浮版本~~：已生成 `uv.lock`。
 12. pyright 声明未执行：安装并跑通 basic 级别，清理测试中的 `type: ignore`。
 13. ~~日志乱码~~：`app/logging_setup.py` 显式 UTF-8 handler，启动脚本统一 `PYTHONUTF8=1`。
-14. 文档：README 引用同级旧项目的设计文档，独立分发时断链；`get_group_msg_history` 为 NapCat 扩展，Lagrange 兼容性需实测标注。
+14. ~~**文档引用断链**~~：README 与 AGENTS.md 已收敛到本项目现有的设计契约和 ADR，不再依赖同级旧项目文档；`get_group_msg_history` 为 NapCat 扩展，Lagrange 兼容性仍需实测标注。
 
 ### P3 体验打磨
 

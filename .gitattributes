@@ -1,0 +1,14 @@
+# 统一换行符：入库和检出都用 LF
+# 原因：本机 Git 系统级 core.autocrlf=true，不声明的话下次 checkout 会把工作区全改成 CRLF，
+# 与仓库里的 LF 源文件不一致，产生"整文件都改了"的假 diff。
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.db binary
+*.sqlite binary
+*.sqlite3 binary

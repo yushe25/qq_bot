@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+state/
+.pytest_cache/
+.env
+config.json
+config.txt
+logs/
+.idea/
+.ruff_cache/
+_dbg.json
+*.db
+*.sqlite
+*.sqlite3
+*.log

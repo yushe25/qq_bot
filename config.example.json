@@ -1,0 +1,75 @@
+{
+  "qq": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "httpUrl": "http://127.0.0.1:3000",
+    "accessToken": "",
+    "ownerQq": ""
+  },
+  "llm": {
+    "provider": "openai-compatible",
+    "baseUrl": "http://127.0.0.1:8000/v1",
+    "apiKeyEnv": "QQF_LLM_API_KEY",
+    "extraHeaders": {},
+    "model": "qwen2.5-32b",
+    "temperature": 0.8,
+    "maxTokens": 200,
+    "timeoutSeconds": 60,
+    "maxRetries": 2,
+    "retryBaseDelaySeconds": 1.0
+  },
+  "scheduler": {
+    "batchWindowMs": 8000,
+    "wakeProbability": 0.04,
+    "names": ["小皮"],
+    "keywords": ["今晚开黑", "出来玩"],
+    "maxWakesPerMinute": 4,
+    "maxWakesPerHour": 20,
+    "maxConcurrent": 4,
+    "maxToolSteps": 6,
+    "maxTextFallback": true,
+    "noActionLimit": 2,
+    "preSleepWaitMinutes": 5,
+    "minSleepMs": 60000,
+    "maxSleepMs": 14400000,
+    "cooldownSeconds": 90
+  },
+  "tokenBudget": {
+    "wakeMessages": 12,
+    "historyMessages": 28,
+    "eventTextChars": 160,
+    "toolResultChars": 1600
+  },
+  "learning": {
+    "enabled": true,
+    "intervalMinutes": 20,
+    "minNewMessages": 10,
+    "confidenceThreshold": 0.7,
+    "maxNotesPerSession": 20,
+    "notesTtlDays": 7,
+    "maxObservationsPerSession": 250,
+    "excludeMembers": []
+  },
+  "safety": {
+    "allowGroups": ["100000"],
+    "allowPrivate": [],
+    "maxGroupMembers": 20,
+    "maxSendsPerMinute": 4,
+    "maxSendsPerHour": 60,
+    "maxSendsPerDay": 200,
+    "maxSendsPerWake": 3,
+    "maxMessageChars": 200,
+    "maxImageBytes": 8388608,
+    "maxImagePixels": 40960000
+  },
+  "console": {
+    "host": "127.0.0.1",
+    "port": 3100,
+    "token": ""
+  },
+  "storage": {
+    "dir": "state",
+    "databasePath": "state/qqf.db"
+  },
+  "personaPath": "personas/default.yaml",
+  "stickerDir": "stickers"
+}

@@ -25,6 +25,8 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "--basetemp=.pytest-tmp/pytest"
+cache_dir = ".pytest-tmp/pytest-cache"
 
 [tool.ruff]
 target-version = "py312"

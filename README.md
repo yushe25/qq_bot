@@ -304,6 +304,10 @@ python -m pytest
 python -m ruff check .
 ```
 
+`pyproject.toml` 已将 pytest 临时目录固定为 `.pytest-tmp/pytest`，缓存目录固定为
+`.pytest-tmp/pytest-cache`，避免 Windows 默认临时目录权限导致测试收集失败。二者均由
+`.gitignore` 排除。
+
 ## 与设计文档的关系
 
 当前实现的设计依据集中在 `docs/design-contracts/` 和 `docs/decisions/`；旧版 qq-bridge 设计文档不随本仓库分发，也不是运行前置依赖。

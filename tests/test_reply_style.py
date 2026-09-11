@@ -22,5 +22,9 @@ def test_decimal_point_is_not_treated_as_sentence_end() -> None:
     assert normalize_reply_segments("价格是3.14元") == ["价格是3.14元"]
 
 
+def test_literal_at_is_preserved() -> None:
+    assert normalize_reply_segments("咋了老@我 有啥事") == ["咋了老@我 有啥事"]
+
+
 def test_empty_segments_are_dropped() -> None:
     assert normalize_reply_segments("，，，") == []

@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 from app.agent.llm_provider import ChatRequest
 from app.agent.providers.mock import MockProvider
@@ -250,3 +251,116 @@ def test_llm_config_normalizes_extra_headers(tmp_path) -> None:
     config = AppConfig.load(config_path)
 
     assert config.llm.extra_headers == {"x-opencode-session": "session-123"}
+
+
+def test_llm_config_accepts_domestic_provider_registry(tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "llm": {
+                    "provider": "deepseek",
+                    "fallbacks": ["zhipu"],
+                    "providers": {
+                        "deepseek": {
+                            "baseUrl": "https://api.deepseek.com/v1",
+                            "apiKeyEnv": "DEEPSEEK_API_KEY",
+                            "model": "deepseek-chat",
+                        },
+                        "zhipu": {
+                            "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+                            "apiKeyEnv": "ZHIPU_API_KEY",
+                            "model": "glm-4-flash",
+                        },
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = AppConfig.load(config_path)
+
+    assert config.llm.provider == "deepseek"
+    assert config.llm.fallbacks == ["zhipu"]
+    assert config.llm.providers["deepseek"].model == "deepseek-chat"
+    assert config.llm.providers["zhipu"].base_url == "https://open.bigmodel.cn/api/paas/v4"
+
+
+@pytest.mark.parametrize(
+    "llm",
+    [
+        {
+            "provider": "deepseek",
+            "fallbacks": ["deepseek"],
+            "providers": {
+                "deepseek": {
+                    "baseUrl": "https://api.deepseek.com/v1",
+                    "apiKeyEnv": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                }
+            },
+        },
+        {
+            "provider": "deepseek",
+            "fallbacks": ["missing"],
+            "providers": {
+                "deepseek": {
+                    "baseUrl": "https://api.deepseek.com/v1",
+                    "apiKeyEnv": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                }
+            },
+        },
+        {
+            "provider": "missing",
+            "providers": {
+                "deepseek": {
+                    "baseUrl": "https://api.deepseek.com/v1",
+                    "apiKeyEnv": "DEEPSEEK_API_KEY",
+                    "model": "deepseek-chat",
+                }
+            },
+        },
+    ],
+)
+def test_llm_config_rejects_invalid_provider_routes(llm: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"llm": llm})
+
+
+def test_llm_provider_rejects_plaintext_api_key() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(
+            {
+                "llm": {
+                    "provider": "deepseek",
+                    "providers": {
+                        "deepseek": {
+                            "baseUrl": "https://api.deepseek.com/v1",
+                            "apiKeyEnv": "DEEPSEEK_API_KEY",
+                            "apiKey": "sk-must-not-be-accepted",
+                            "model": "deepseek-chat",
+                        }
+                    },
+                }
+            }
+        )
+
+
+def test_llm_provider_rejects_insecure_remote_url() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(
+            {
+                "llm": {
+                    "provider": "deepseek",
+                    "providers": {
+                        "deepseek": {
+                            "baseUrl": "http://api.deepseek.com/v1",
+                            "apiKeyEnv": "DEEPSEEK_API_KEY",
+                            "model": "deepseek-chat",
+                        }
+                    },
+                }
+            }
+        )

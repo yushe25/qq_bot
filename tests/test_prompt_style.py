@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from app.agent.prompt_builder import DEFAULT_PERSONA, build_invocation_context, build_system_prompt
+from pathlib import Path
+
+from app.agent.prompt_builder import (
+    DEFAULT_PERSONA,
+    build_invocation_context,
+    build_system_prompt,
+    load_persona,
+)
 from app.domain.types import MessageSegment, NormalizedEvent, Session, TriggerCategory, WakeInput
 
 
@@ -20,6 +27,39 @@ def test_default_persona_contains_reply_style_rules() -> None:
 
     assert "说话不用“，”" in prompt
     assert "“...”用来表达无语" in prompt
+
+
+def test_mention_prompt_requires_reply_before_dive() -> None:
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    prompt = build_system_prompt(
+        session,
+        DEFAULT_PERSONA,
+        wake_category=TriggerCategory.MENTION,
+    )
+
+    assert "收到问候时直接回问候，不要问对方有什么事" in prompt
+    assert "回复前不要调用 qq_dive" in prompt
+    assert "不要手写 @ 或 CQ 码" in prompt
+
+
+def test_scheduled_prompt_does_not_require_a_reply() -> None:
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    prompt = build_system_prompt(
+        session,
+        DEFAULT_PERSONA,
+        wake_category=TriggerCategory.SCHEDULED,
+    )
+
+    assert "收到问候时直接回问候，不要问对方有什么事" not in prompt
+
+
+def test_default_persona_identifies_as_lijiang_native() -> None:
+    persona_path = Path(__file__).resolve().parents[1] / "personas" / "default.yaml"
+
+    persona = load_persona(persona_path)
+
+    assert "浙江丽水人" in persona
+    assert "不刻意使用方言" in persona
 
 
 def test_invocation_keeps_only_recent_events_and_bounds_each_message() -> None:

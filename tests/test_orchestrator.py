@@ -68,6 +68,39 @@ class _DiveBatchProvider(MockProvider):
         )
 
 
+class _DiveThenReplyProvider(MockProvider):
+    def __init__(self, config, session_id: str) -> None:
+        super().__init__(config)
+        self.session_id = session_id
+        self.calls = 0
+
+    async def complete(self, req: ChatRequest) -> ChatResult:
+        self.calls += 1
+        if self.calls == 1:
+            return ChatResult(
+                kind="tool_calls",
+                calls=[
+                    ToolCall(
+                        name="qq_dive",
+                        arguments={"nextWakeMs": 60_000, "reason": "先潜水"},
+                        id="dive-first",
+                    )
+                ],
+            )
+        if self.calls == 2:
+            return ChatResult(
+                kind="tool_calls",
+                calls=[
+                    ToolCall(
+                        name="qq_send_group_message",
+                        arguments={"groupId": self.session_id.removeprefix("group:"), "message": "在的"},
+                        id="send-after-rejection",
+                    )
+                ],
+            )
+        return ChatResult(kind="text", content="")
+
+
 async def test_wake_sends_message_and_enters_cooldown(stack: TestStack) -> None:
     session = stack.sessions.ensure_session("group", "100000")
     wake = WakeInput(
@@ -137,6 +170,54 @@ async def test_dive_batch_appends_cancelled_results_for_unexecuted_calls(stack: 
     cancelled = [item for item in session.conversation if item.get("role") == "tool" and "已取消" in str(item.get("content"))]
     assert len(cancelled) == 1
     assert cancelled[0]["tool_call_id"] == "later-1"
+
+
+async def test_mention_dive_rejection_forces_reply(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    stack.config.scheduler.mention_dive_probability = 0.0
+    stack.orchestrator.provider = _DiveThenReplyProvider(stack.config.llm, session.id)
+    wake = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_mention_event(session.id),),
+    )
+
+    outcome = await stack.orchestrator.run_wake(session, wake)
+
+    assert outcome.sent == 1
+    assert outcome.dived is False
+    assert any(item.get("text") == "在的" for item in stack.gateway.sent)
+
+
+async def test_mention_can_dive_when_small_probability_hits(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    stack.config.scheduler.mention_dive_probability = 1.0
+    stack.orchestrator.provider = _ScriptedProvider(
+        [
+            ChatResult(
+                kind="tool_calls",
+                calls=[
+                    ToolCall(
+                        name="qq_dive",
+                        arguments={"nextWakeMs": 60_000, "reason": "小概率错过"},
+                        id="mention-dive",
+                    )
+                ],
+            )
+        ]
+    )
+    wake = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_mention_event(session.id),),
+    )
+
+    outcome = await stack.orchestrator.run_wake(session, wake)
+
+    assert outcome.sent == 0
+    assert outcome.dived is True
 
 
 async def test_llm_failure_is_audited(stack: TestStack) -> None:

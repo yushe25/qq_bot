@@ -6,9 +6,9 @@ from app.config import LLMConfig
 
 
 def create_provider(config: LLMConfig):
-    if config.provider == "mock":
-        return MockProvider(config)
-    return OpenAICompatibleProvider(config)
+    from app.agent.providers.router import build_llm_provider
+
+    return build_llm_provider(config)
 
 
 __all__ = ["MockProvider", "OpenAICompatibleProvider", "create_provider"]

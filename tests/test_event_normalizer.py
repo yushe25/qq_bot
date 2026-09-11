@@ -80,6 +80,25 @@ def test_normalize_media_segments_are_summarized() -> None:
     assert event.text == "[图片][表情:178:抠鼻][语音][文件:报告.pdf][分享卡片]"
 
 
+def test_normalize_falls_back_from_punctuation_only_card_to_nickname() -> None:
+    raw = {
+        "post_type": "message",
+        "message_type": "group",
+        "time": 1767171600,
+        "self_id": 31415926,
+        "message_id": 45,
+        "group_id": 100000,
+        "user_id": 10001,
+        "sender": {"user_id": 10001, "nickname": "阿泽", "card": "﹡"},
+        "raw_message": "早上好",
+        "message": [{"type": "text", "data": {"text": "早上好"}}],
+    }
+
+    event = normalize(raw)
+
+    assert event.sender_name == "阿泽"
+
+
 def test_normalize_raw_message_with_media_still_uses_media_summary() -> None:
     raw = {
         "post_type": "message",

@@ -6,20 +6,51 @@
     "ownerQq": ""
   },
   "llm": {
-    "provider": "openai-compatible",
-    "baseUrl": "http://127.0.0.1:8000/v1",
-    "apiKeyEnv": "QQF_LLM_API_KEY",
-    "extraHeaders": {},
-    "model": "qwen2.5-32b",
-    "temperature": 0.8,
-    "maxTokens": 200,
-    "timeoutSeconds": 60,
-    "maxRetries": 2,
-    "retryBaseDelaySeconds": 1.0
+    "provider": "deepseek",
+    "fallbacks": [],
+    "allowFallback": true,
+    "providers": {
+      "deepseek": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api.deepseek.com/v1",
+        "apiKeyEnv": "DEEPSEEK_API_KEY",
+        "model": "deepseek-chat",
+        "capabilities": {"tools": true}
+      },
+      "zhipu": {
+        "type": "openai-compatible",
+        "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+        "apiKeyEnv": "ZHIPU_API_KEY",
+        "model": "glm-4-flash",
+        "capabilities": {"tools": true}
+      },
+      "qwen": {
+        "type": "openai-compatible",
+        "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "apiKeyEnv": "DASHSCOPE_API_KEY",
+        "model": "qwen-plus",
+        "capabilities": {"tools": true}
+      },
+      "moonshot": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api.moonshot.cn/v1",
+        "apiKeyEnv": "MOONSHOT_API_KEY",
+        "model": "moonshot-v1-8k",
+        "capabilities": {"tools": true}
+      },
+      "siliconflow": {
+        "type": "openai-compatible",
+        "baseUrl": "https://api.siliconflow.cn/v1",
+        "apiKeyEnv": "SILICONFLOW_API_KEY",
+        "model": "deepseek-ai/DeepSeek-V3",
+        "capabilities": {"tools": true}
+      }
+    }
   },
   "scheduler": {
     "batchWindowMs": 8000,
     "wakeProbability": 0.04,
+    "mentionDiveProbability": 0.05,
     "names": ["小皮"],
     "keywords": ["今晚开黑", "出来玩"],
     "maxWakesPerMinute": 4,

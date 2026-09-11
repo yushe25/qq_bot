@@ -189,6 +189,23 @@ async def test_safety_pipeline_splits_comma_messages(stack: TestStack) -> None:
     assert [item["text"] for item in stack.gateway.sent] == ["在吗", "帮我看看"]
 
 
+async def test_safety_pipeline_preserves_literal_at(stack: TestStack) -> None:
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append({"type": "send_group", "group_id": "100000", "message": "咋了老@我 有啥事"})
+
+    results = await stack.safety.execute_outbox(context, stack.gateway)
+
+    assert results[0]["ok"] is True
+    assert stack.gateway.sent[0]["text"] == "咋了老@我 有啥事"
+
+
 async def test_safety_pipeline_blocks_unknown_scene_and_sensitive_text(stack: TestStack) -> None:
     session = Session(id="group:999999", scene_type="group", scene_id="999999")
     context = ToolContext(

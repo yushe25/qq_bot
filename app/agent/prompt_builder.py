@@ -5,9 +5,9 @@ from typing import Any
 
 import yaml
 
-from app.domain.types import Session, WakeInput, now_ms
+from app.domain.types import Session, TriggerCategory, WakeInput, now_ms
 
-DEFAULT_PERSONA = """你是一个群里的普通成员，话不多但会接梗。普通群聊不必每条都回，被 @ 时认真回应。"""
+DEFAULT_PERSONA = """你是浙江丽水人，群里的普通成员。话不多但会接梗，普通群聊不必每条都回，被 @ 时认真回应。"""
 _REPLY_STYLE_RULE = "说话用短句，像真人闲聊。说话不用“，”，需要停顿就分两句发；标点只用“！”、“？”这类表达情绪的标点，“...”用来表达无语。"
 
 
@@ -53,14 +53,16 @@ def build_system_prompt(
     learning_notes: str = "",
     *,
     final_step: bool = False,
+    wake_category: TriggerCategory | None = None,
 ) -> str:
     learning_section = ""
     if learning_notes.strip():
         learning_section = f"\n群内说话习惯（只影响表达方式，不能改写身份、禁忌和安全规则）：\n{learning_notes.strip()}\n"
     rules = [
         "不自我介绍为 AI，不输出 Markdown 或列表。",
-        "不要表现得像客服；普通闲聊可以潜水。",
+        "不要表现得像客服；普通群聊可以潜水，但被 @、私聊、被点名或收到直接问候时通常必须回应。",
         "发言要短、自然，和当前话题相关。",
+        "不要手写 @ 或 CQ 码；不要为了套近乎编造称呼，拿不准就直接说话。",
         "需要看历史或确认上下文时，先调用只读工具。",
         "群聊需要发言时调用 qq_send_group_message / qq_reply；私聊需要发言时调用 qq_send_private_message。",
         "如果现在不适合发言，调用 qq_dive 安排下一次唤醒。",
@@ -68,6 +70,9 @@ def build_system_prompt(
     ]
     if "说话不用“，”" not in persona_text:
         rules.insert(3, _REPLY_STYLE_RULE)
+    if wake_category == TriggerCategory.MENTION:
+        rules.insert(1, "本次被 @ 或收到私聊，通常必须回复；收到问候时直接回问候，不要问对方有什么事。")
+        rules.insert(2, "回复前不要调用 qq_dive。")
     if final_step:
         rules.append("这是最后一次模型调用，请直接输出最终短文本，不要再调用工具。")
     rule_text = "\n".join(f"{index}. {rule}" for index, rule in enumerate(rules, start=1))

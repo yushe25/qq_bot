@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.agent.tools import ToolContext, execute_tool
-from app.domain.types import ToolCall
+from app.domain.types import ToolCall, TriggerCategory
 from tests.conftest import TestStack
 
 
@@ -16,6 +16,13 @@ def _private_send_call(user_id: str = "100001", message: str = "私聊回复") -
     return ToolCall(
         name="qq_send_private_message",
         arguments={"userId": user_id, "message": message},
+    )
+
+
+def _dive_call() -> ToolCall:
+    return ToolCall(
+        name="qq_dive",
+        arguments={"nextWakeMs": 60_000, "reason": "先潜水"},
     )
 
 
@@ -241,3 +248,58 @@ async def test_sticker_send_fails_when_library_missing(stack: TestStack) -> None
 
     assert result.success is False
     assert "表情库未配置" in result.message
+
+
+async def test_qq_dive_is_rejected_for_mention_before_reply(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+        wake_category=TriggerCategory.MENTION,
+        mention_dive_allowed=False,
+    )
+
+    result = await execute_tool(context, _dive_call())
+
+    assert result.success is False
+    assert "必须先回复" in result.message
+    assert "直接问候" in result.message
+    assert result.command is None
+
+
+async def test_qq_dive_is_allowed_for_scheduled_wake(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+        wake_category=TriggerCategory.SCHEDULED,
+    )
+
+    result = await execute_tool(context, _dive_call())
+
+    assert result.success is True
+    assert result.command == "dive"
+
+
+async def test_qq_dive_is_allowed_for_mention_when_probability_hits(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+        wake_category=TriggerCategory.MENTION,
+        mention_dive_allowed=True,
+    )
+
+    result = await execute_tool(context, _dive_call())
+
+    assert result.success is True
+    assert result.command == "dive"

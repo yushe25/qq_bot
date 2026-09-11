@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.agent.sticker_library import StickerLibrary
 from app.config import AppConfig
-from app.domain.types import Session, ToolCall, ToolResult
+from app.domain.types import Session, ToolCall, ToolResult, TriggerCategory
 from app.memory.store import MemoryStore
 from app.platform.gateway import QQGateway
 from app.safety.whitelist import Whitelist
@@ -74,6 +74,8 @@ class ToolContext:
     whitelist: Whitelist
     outbox: list[dict[str, object]] = field(default_factory=list)
     sticker_library: StickerLibrary | None = None
+    wake_category: TriggerCategory | None = None
+    mention_dive_allowed: bool = False
 
 
 async def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolResult:
@@ -156,6 +158,12 @@ async def _dispatch(ctx: ToolContext, call: ToolCall) -> ToolResult:
         args = WaitArgs.model_validate(call.arguments)
         return ToolResult(success=True, message="等待中", command="wait", data={"duration_ms": args.duration_ms})
     if name == "qq_dive":
+        if (
+            ctx.wake_category == TriggerCategory.MENTION
+            and not ctx.outbox
+            and not ctx.mention_dive_allowed
+        ):
+            return ToolResult(success=False, message="被 @ 或收到直接问候时必须先回复，不能潜水")
         args = DiveArgs.model_validate(call.arguments)
         return ToolResult(
             success=True,

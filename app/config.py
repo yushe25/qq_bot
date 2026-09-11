@@ -4,9 +4,14 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+_PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+_LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+_BLOCKED_EXTRA_HEADERS = {"authorization", "content-type"}
 
 
 class QQConfig(BaseModel):
@@ -17,8 +22,52 @@ class QQConfig(BaseModel):
     enabled: bool = True
 
 
+class ProviderCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tools: bool = True
+    streaming: bool = False
+
+    @model_validator(mode="after")
+    def validate_supported_capabilities(self) -> ProviderCapabilities:
+        if not self.tools:
+            raise ValueError("provider capabilities.tools must be true")
+        if self.streaming:
+            raise ValueError("provider capabilities.streaming is not supported")
+        return self
+
+
+class LLMProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["openai-compatible"] = "openai-compatible"
+    base_url: str
+    api_key_env: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=200, ge=1, le=4096)
+    timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
+    max_retries: int = Field(default=2, ge=0, le=5)
+    retry_base_delay_seconds: float = Field(default=1.0, ge=0.0, le=30.0)
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    capabilities: ProviderCapabilities = Field(default_factory=ProviderCapabilities)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        return _validate_https_base_url(value)
+
+    @field_validator("extra_headers")
+    @classmethod
+    def validate_extra_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_extra_headers(value)
+
+
 class LLMConfig(BaseModel):
     provider: str = "openai-compatible"
+    providers: dict[str, LLMProviderConfig] = Field(default_factory=dict)
+    fallbacks: list[str] = Field(default_factory=list)
+    allow_fallback: bool = True
     base_url: str = "http://127.0.0.1:8000/v1"
     api_key_env: str = "QQF_LLM_API_KEY"
     api_key: str = ""
@@ -30,10 +79,44 @@ class LLMConfig(BaseModel):
     max_retries: int = 2
     retry_base_delay_seconds: float = 1.0
 
+    @field_validator("provider")
+    @classmethod
+    def normalize_provider(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @field_validator("extra_headers")
+    @classmethod
+    def validate_extra_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_extra_headers(value)
+
+    @model_validator(mode="after")
+    def validate_provider_routing(self) -> LLMConfig:
+        if not self.providers:
+            if self.fallbacks:
+                raise ValueError("llm.fallbacks requires llm.providers")
+            if self.provider not in {"mock", "openai-compatible"}:
+                raise ValueError("llm.provider must be mock or openai-compatible without llm.providers")
+            return self
+
+        for provider_id in self.providers:
+            if not _PROVIDER_ID_RE.fullmatch(provider_id):
+                raise ValueError(f"invalid llm.providers key: {provider_id!r}")
+        if self.provider != "mock" and self.provider not in self.providers:
+            raise ValueError(f"llm.provider {self.provider!r} is not defined in llm.providers")
+        if len(self.fallbacks) != len(set(self.fallbacks)):
+            raise ValueError("llm.fallbacks must not contain duplicates")
+        for fallback in self.fallbacks:
+            if fallback == self.provider:
+                raise ValueError("llm.fallbacks must not contain the primary provider")
+            if fallback not in self.providers:
+                raise ValueError(f"llm.fallbacks references unknown provider {fallback!r}")
+        return self
+
 
 class SchedulerConfig(BaseModel):
     batch_window_ms: int = 8000
     wake_probability: float = 0.04
+    mention_dive_probability: float = Field(default=0.05, ge=0.0, le=1.0)
     names: list[str] = Field(default_factory=list)
     keywords: list[str] = Field(default_factory=list)
     max_wakes_per_minute: int = 4
@@ -137,3 +220,19 @@ def _normalize_keys(value: Any) -> Any:
 
 def _snake_key(key: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", "_", key).lower()
+
+
+def _validate_https_base_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("baseUrl must be an absolute http:// or https:// URL")
+    if parsed.scheme == "http" and parsed.hostname not in _LOOPBACK_HOSTS:
+        raise ValueError("remote provider baseUrl must use https://")
+    return value.rstrip("/")
+
+
+def _validate_extra_headers(value: dict[str, str]) -> dict[str, str]:
+    for key in value:
+        if key.lower() in _BLOCKED_EXTRA_HEADERS:
+            raise ValueError(f"extraHeaders must not override {key!r}")
+    return value

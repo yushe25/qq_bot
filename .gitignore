@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 state/
 .pytest_cache/
+.pytest-tmp/
 .env
 config.json
 config.txt

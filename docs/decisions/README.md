@@ -36,3 +36,4 @@ ADR 用来记录方向性决策。聊天中的随口建议、临时需求和 Age
 - [0001. 项目定位为小群单机运行时](0001-small-group-single-instance.md)
 - [0002. 自主学习只学表达不学身份](0002-learning-boundary.md)
 - [0003. AI 辅助开发需要契约门禁](0003-ai-dev-contract-gate.md)
+- [0004. 国内模型统一走 OpenAI-compatible Provider 路由](0004-domestic-model-providers.md)

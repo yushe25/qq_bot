@@ -13,9 +13,10 @@ from app.agent.sticker_library import StickerLibrary
 from app.agent.tool_schemas import build_tool_schemas
 from app.agent.tools import ToolContext, execute_tool
 from app.config import AppConfig
-from app.domain.types import Session, SessionState, ToolCall, WakeInput, now_ms
+from app.domain.types import Session, SessionState, ToolCall, TriggerCategory, WakeInput, now_ms
 from app.memory.store import MemoryStore
 from app.platform.gateway import QQGateway
+from app.platform.qq.event_normalizer import visible_name
 from app.runtime.bus import EventBus
 from app.runtime.safety_pipeline import SafetyPipeline
 from app.runtime.schedule import load_schedule_profile
@@ -104,9 +105,16 @@ class Orchestrator:
             memory=self.memory,
             whitelist=self.whitelist,
             sticker_library=self.sticker_library,
+            wake_category=wake_input.category,
+            mention_dive_allowed=(
+                wake_input.category == TriggerCategory.MENTION
+                and random.random() < self.config.scheduler.mention_dive_probability
+            ),
         )
         dive_ms: int | None = None
         seen_tool_results: set[tuple[str, str]] = set()
+        provider_temperature = None if self.config.llm.providers else self.config.llm.temperature
+        provider_max_tokens = None if self.config.llm.providers else self.config.llm.max_tokens
 
         for step in range(self.config.scheduler.max_tool_steps):
             outcome.steps = step + 1
@@ -119,11 +127,12 @@ class Orchestrator:
                             persona,
                             learning_notes,
                             final_step=final_step,
+                            wake_category=wake_input.category,
                         ),
                         messages=trim_conversation(conversation, history_limit),
                         tools=build_tool_schemas(allow_tools=not final_step),
-                        temperature=self.config.llm.temperature,
-                        max_tokens=self.config.llm.max_tokens,
+                        temperature=provider_temperature,
+                        max_tokens=provider_max_tokens,
                     )
                 )
                 _accumulate_usage(outcome, result)
@@ -352,10 +361,10 @@ def _format_message_line(message: dict[str, Any], *, max_chars: int) -> str:
     sender = message.get("sender")
     if isinstance(sender, dict):
         user_id = str(sender.get("user_id") or "")
-        nickname = str(sender.get("card") or sender.get("nickname") or user_id or "?")
+        nickname = visible_name(sender.get("card"), sender.get("nickname"), fallback=user_id or "?")
     else:
         user_id = str(message.get("user_id") or "")
-        nickname = str(message.get("nickname") or user_id or "?")
+        nickname = visible_name(message.get("nickname"), fallback=user_id or "?")
     raw = message.get("raw_message")
     if not isinstance(raw, str):
         raw = message.get("message")
@@ -367,7 +376,7 @@ def _format_message_line(message: dict[str, Any], *, max_chars: int) -> str:
 
 def _format_member_line(member: dict[str, Any]) -> str:
     user_id = str(member.get("user_id") or "?")
-    nickname = str(member.get("card") or member.get("nickname") or user_id)
+    nickname = visible_name(member.get("card"), member.get("nickname"), fallback=user_id)
     role = member.get("role")
     if role:
         return f"{nickname}({user_id}) [{role}]"

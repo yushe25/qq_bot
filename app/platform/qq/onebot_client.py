@@ -161,4 +161,13 @@ class OneBotV11Gateway:
 
     async def get_group_members(self, group_id: str) -> list[dict[str, object]]:
         data = await self._post("get_group_member_list", {"group_id": int(group_id)})
-        return list(data.get("data", data if isinstance(data, list) else []))
+        if isinstance(data, list):
+            return list(data)
+        if isinstance(data, dict):
+            nested = data.get("data")
+            if isinstance(nested, list):
+                return list(nested)
+            members = data.get("members")
+            if isinstance(members, list):
+                return list(members)
+        return []

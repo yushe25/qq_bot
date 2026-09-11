@@ -155,3 +155,29 @@ async def test_get_message_reports_http_error(monkeypatch: pytest.MonkeyPatch) -
 
     with pytest.raises(RuntimeError, match="HTTP 502"):
         await gateway.get_message("123")
+
+
+async def test_get_group_members_accepts_direct_list_data(monkeypatch: pytest.MonkeyPatch) -> None:
+    members = [{"user_id": 10001, "nickname": "alice"}]
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"status": "ok", "retcode": 0, "data": members})
+    )
+    _patch_http_client(monkeypatch, transport)
+    gateway = OneBotV11Gateway(QQConfig())
+
+    result = await gateway.get_group_members("100000")
+
+    assert result == members
+
+
+async def test_get_group_members_accepts_members_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    members = [{"user_id": 10002, "nickname": "bob"}]
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"status": "ok", "retcode": 0, "data": {"members": members}})
+    )
+    _patch_http_client(monkeypatch, transport)
+    gateway = OneBotV11Gateway(QQConfig())
+
+    result = await gateway.get_group_members("100000")
+
+    assert result == members

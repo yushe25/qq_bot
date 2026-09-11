@@ -4,13 +4,56 @@ QQ Friend Simulator，一个自托管、不绑定单一模型平台，也不依�
 
 Python 3.12+ 实现，无 Node 依赖。
 
+## 启动脚本
+
+项目根目录的 `start.ps1` 是推荐的启动入口。脚本会自动切换到项目根目录，检查 Python 3.12+、运行依赖和配置文件，并使用虚拟环境中的 Python 启动 QQF。
+
+首次使用先创建虚拟环境并安装依赖：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+常用命令：
+
+```powershell
+# 离线 Mock 模式，不需要真实 QQ 和模型密钥
+.\start.ps1 -Mock
+
+# 使用指定配置启动真实 OneBot 模式
+.\start.ps1 -Config config.json
+
+# 只检查 Python、依赖和配置文件，不启动服务
+.\start.ps1 -Config config.json -CheckOnly
+
+# 使用指定虚拟环境
+.\start.ps1 -VenvDir D:\venvs\qqf
+```
+
+参数说明：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `-Mock` | 关闭 | 使用离线 Mock LLM 和 `scripts/mock_qq_server.py` |
+| `-Config` | `config.json` | 配置文件路径，支持相对项目根目录或绝对路径 |
+| `-VenvDir` | `.venv` | 虚拟环境目录，支持相对项目根目录或绝对路径 |
+| `-CheckOnly` | 关闭 | 完成检查后退出，不启动长期运行的服务 |
+
+Mock 模式找不到 `config.json` 时会使用 `config.example.json`；真实模式缺少指定配置时会直接报错。Mock 子进程会在主程序退出时自动清理，Python 的退出码也会原样返回给 PowerShell。
+
+如果本机 PowerShell 禁止直接运行脚本，可以使用：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1 -Mock
+```
+
 ## 快速开始（离线演示）
 
 不需要真实 QQ 账号，也不需要真实模型，先在本地把整条链路跑起来：
 
 ```text
-python scripts/mock_qq_server.py
-python -m app.main --mock
+.\start.ps1 -Mock
 ```
 
 打开 `http://127.0.0.1:3100` 即可看到控制台。mock OneBot 会定时向群 `100000` 推送消息，其中包含一次 `@`，调度器应唤醒 Mock LLM 并“发言”；未命中触发条件时会潜水并安排下一次唤醒。
@@ -49,9 +92,20 @@ QQ 侧使用 [OneBot v11] 协议，NapCat、Lagrange.OneBot 等实现均可：
        "ownerQq": "你的QQ号"
      },
      "llm": {
-       "provider": "openai-compatible",
-       "baseUrl": "http://127.0.0.1:8000/v1",
-       "model": "qwen2.5-32b"
+       "provider": "deepseek",
+       "fallbacks": ["zhipu"],
+       "providers": {
+         "deepseek": {
+           "baseUrl": "https://api.deepseek.com/v1",
+           "apiKeyEnv": "DEEPSEEK_API_KEY",
+           "model": "deepseek-chat"
+         },
+         "zhipu": {
+           "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+           "apiKeyEnv": "ZHIPU_API_KEY",
+           "model": "glm-4-flash"
+         }
+       }
      },
      "safety": {
        "allowGroups": ["群号1"],
@@ -64,11 +118,46 @@ QQ 侧使用 [OneBot v11] 协议，NapCat、Lagrange.OneBot 等实现均可：
 
    ```text
    $env:QQF_ONEBOT_TOKEN = "onebot-token"
-   $env:QQF_LLM_API_KEY = "sk-..."
-   python -m app.main --config config.json
+   $env:DEEPSEEK_API_KEY = "sk-..."
+   $env:ZHIPU_API_KEY = "sk-..."
+   .\start.ps1 -Config config.json
    ```
 
-如果模型走本机 CC Switch / OpenCode Go 代理，把 `llm.baseUrl` 指向代理地址，并在 `llm.extraHeaders` 里配置 `x-opencode-session`。代理侧自行处理上游鉴权与模型路由，不要求 DeepSeek 官方 API key。
+可在真正启动前只做环境和配置检查：
+
+```text
+.\start.ps1 -Config config.json -CheckOnly
+```
+
+`config.example.json` 已列出国内常见 Provider 模板：
+
+| Provider ID | 默认模型示例 | API Key 环境变量 |
+| --- | --- | --- |
+| `deepseek` | `deepseek-chat` | `DEEPSEEK_API_KEY` |
+| `zhipu` | `glm-4-flash` | `ZHIPU_API_KEY` |
+| `qwen` | `qwen-plus` | `DASHSCOPE_API_KEY` |
+| `moonshot` | `moonshot-v1-8k` | `MOONSHOT_API_KEY` |
+| `siliconflow` | `deepseek-ai/DeepSeek-V3` | `SILICONFLOW_API_KEY` |
+
+Provider 的地址、模型名和环境变量均在 JSON 中显式配置，不作为代码内置默认值。只启动主
+Provider 时只要求对应环境变量；加入 `fallbacks` 后，备用 Provider 的密钥也必须存在。
+`RATE_LIMIT`、`TIMEOUT`、`PROVIDER_UNAVAILABLE` 会按 `fallbacks` 顺序降级一次，
+鉴权、上下文超限和无效请求不会自动切换。
+
+如果模型走本机 CC Switch / OpenCode Go 兼容代理，仍可使用旧的扁平配置：
+
+```json
+{
+  "llm": {
+    "provider": "openai-compatible",
+    "baseUrl": "http://127.0.0.1:8000/v1",
+    "model": "qwen2.5-32b",
+    "extraHeaders": {"x-opencode-session": "your-session"}
+  }
+}
+```
+
+代理侧自行处理上游鉴权与模型路由，不要求官方 API key。
 
 只有 `allowGroups` / `allowPrivate` / `ownerQq` 内的会话才会被处理，所有对外消息都会经过白名单、内容过滤、频率限制和审计。
 
@@ -92,6 +181,7 @@ python scripts/onebot_check.py
 - 事件先进入 8 秒批处理窗口，合并成一次唤醒决策。
 - 唤醒类型优先级：`@` 提及 > 昵称 > 提问 > 关键词 > 拍一拍 > 普通消息概率唤醒 > 定时唤醒。
 - LLM 通过工具自主决定看群历史、查成员、发送、引用回复、私聊 owner、等待、潜水或更新记忆。
+- 出站文本会按短句拆分并清理无关标点；字面 `@` 会保留，CQ 码仍由安全管线拒绝。
 - 发言后进入 90 秒冷却；无行动时自动潜水，连续无行动会强制缩短下一次潜水间隔，避免“永眠”。
 - 全局和按会话都有发送/唤醒频率上限，防止刷屏。
 - 作息窗口来自 persona 的 `schedule`：活跃时段正常响应，安静时段普通消息排队到下一活跃窗口，owner/@/拍一拍走慢响应延迟。
@@ -134,14 +224,17 @@ python scripts/onebot_check.py
 | `qq.httpUrl` | OneBot HTTP 动作地址 | `http://127.0.0.1:3000` |
 | `qq.accessToken` | OneBot Authorization Bearer | 空 |
 | `qq.ownerQq` | 允许的私聊所有者 | 空 |
-| `llm.provider` | `mock` 或 `openai-compatible` | `openai-compatible` |
-| `llm.baseUrl` | OpenAI 兼容 API 地址 | `http://127.0.0.1:8000/v1` |
-| `llm.model` | 模型名 | `qwen2.5-32b` |
+| `llm.provider` | `mock`、旧的 `openai-compatible`，或 `llm.providers` 中的 Provider ID | `openai-compatible` |
+| `llm.providers` | 命名 Provider 注册表；支持 DeepSeek、智谱、通义、Moonshot、硅基流动等 OpenAI 兼容服务 | `{}` |
+| `llm.fallbacks` | 主 Provider 失败时按顺序尝试的备用 Provider ID | `[]` |
+| `llm.allowFallback` | 是否启用自动降级 | `true` |
+| `llm.baseUrl` / `llm.model` | 旧版扁平 OpenAI 兼容配置 | 本地地址 / `qwen2.5-32b` |
 | `llm.extraHeaders` | 额外请求头，例如 CC Switch / OpenCode Go 的 `x-opencode-session` | `{}` |
-| `llm.maxRetries` | LLM 请求失败后的最大重试次数 | `2` |
-| `llm.maxTokens` | 单次模型调用输出上限 | `200` |
+| `llm.maxRetries` | 旧版扁平配置的 LLM 最大重试次数 | `2` |
+| `llm.maxTokens` | 旧版扁平配置和 mock 的单次输出上限 | `200` |
 | `scheduler.batchWindowMs` | 群消息批处理窗口（毫秒） | `8000` |
 | `scheduler.wakeProbability` | 普通消息唤醒概率 | `0.04` |
+| `scheduler.mentionDiveProbability` | 被 @ 或私聊时未回复直接潜水的概率 | `0.05` |
 | `scheduler.names` | 能被昵称唤起的名字列表 | `[]` |
 | `scheduler.keywords` | 关键词唤醒列表 | `[]` |
 | `scheduler.maxWakesPerMinute` | 每分钟唤醒批次上限 | `4` |
@@ -169,7 +262,7 @@ python scripts/onebot_check.py
 | `storage.databasePath` | SQLite 状态库路径 | `state/qqf.db` |
 | `personaPath` | 人格 YAML 路径 | `personas/default.yaml` |
 
-环境变量会被 JSON 配置覆盖逻辑合并：`QQF_LLM_API_KEY`、`QQF_ONEBOT_TOKEN`、`QQF_CONSOLE_TOKEN`、`QQF_DATA_DIR`。其中 `QQF_DATA_DIR` 会改变状态库目录。程序启动时会在状态目录创建 `qqf.lock`，重复启动会直接退出，避免两个实例同时写同一个 SQLite 库。
+环境变量会被 JSON 配置覆盖逻辑合并：`QQF_LLM_API_KEY`、`QQF_ONEBOT_TOKEN`、`QQF_CONSOLE_TOKEN`、`QQF_DATA_DIR`。命名 Provider 的 Key 由各自的 `apiKeyEnv` 指定，例如 `DEEPSEEK_API_KEY`；JSON 中的明文 `apiKey` 会被拒绝。`QQF_DATA_DIR` 会改变状态库目录。程序启动时会在状态目录创建 `qqf.lock`，重复启动会直接退出，避免两个实例同时写同一个 SQLite 库。
 
 ## 控制台
 

@@ -38,3 +38,4 @@
 - [schedule-behavior.md](schedule-behavior.md)：作息、延迟与发言节奏（implemented）。
 - [memory-private.md](memory-private.md)：轻量记忆与 owner 私聊（implemented）。
 - [token-budget.md](token-budget.md)：Token 预算、上下文裁剪与 usage 记录（implemented）。
+- [model-routing.md](model-routing.md)：国内模型多 Provider 配置与主备路由（implemented）。

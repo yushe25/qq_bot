@@ -11,8 +11,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 
-from app.agent.providers.mock import MockProvider
-from app.agent.providers.openai_compatible import OpenAICompatibleProvider
+from app.agent.providers.router import build_llm_provider
 from app.agent.sticker_library import StickerLibrary
 from app.config import AppConfig
 from app.console.router import build_console_router
@@ -92,10 +91,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
     audit = AuditLog(store)
     bus = EventBus()
 
-    if config.llm.provider.strip().lower() == "mock":
-        provider = MockProvider(config.llm)
-    else:
-        provider = OpenAICompatibleProvider(config.llm)
+    provider = build_llm_provider(config.llm)
 
     if config.qq.enabled:
         gateway: OneBotV11Gateway | NullGateway = OneBotV11Gateway(config.qq)

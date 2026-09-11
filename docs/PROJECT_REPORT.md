@@ -28,7 +28,7 @@ runtime/scheduler    8 秒批处理 + 触发分类 + 唤醒决策 + 唤醒限流
 runtime/orchestrator 会话锁 + LLM 工具循环（≤6 步）+ 出站安全管线
     │
     ▼
-agent/providers      mock / openai-compatible
+agent/providers      mock / openai-compatible / multi-provider router
 agent/tools          9 个工具（历史/成员/发送/群回复/私聊/等待/潜水/记忆/表情）
     │
     ▼
@@ -36,7 +36,7 @@ storage(SQLite)      会话 / 记忆 / 唤醒日志 / 审计
 console              FastAPI API + WS 实时流 + 单页控制台
 ```
 
-规模：44 个 Python 模块（含 `__init__`），连同测试、脚本、控制台页面约 3800 行。
+规模：45 个 Python 模块（含 `__init__`），连同测试、脚本、控制台页面约 4000 行。
 
 ## 三、项目现况
 
@@ -79,9 +79,10 @@ console              FastAPI API + WS 实时流 + 单页控制台
 | 自主学习 | 可用 | 观察、学习任务、严格 JSON、置信度/敏感过滤、持久化、过期、prompt 注入和控制台删除链路已实现；契约标记为 implemented |
 | 私聊 | 可用 | owner/当前私聊会话工具、白名单、内容过滤、限流、每日上限与审计链路已覆盖 |
 | Token 预算 | 可用 | 唤醒降到最近 12 条、历史最多 28 条、工具历史默认 10 条、最终步骤移除工具 schema；结果与消息限长、重复内容压缩、usage 写入 `wake_log` |
+| 国内模型 Provider | 可用 | 显式注册 DeepSeek、智谱、通义、Moonshot、硅基流动等 OpenAI-compatible 服务；主备单次降级、错误归一化、环境变量 Key 与旧扁平配置兼容 |
 | 工程化 | 已补齐 | git / CI / 锁文件 / 启动脚本 / UTF-8 日志（问题 9/10/11/13 已修复） |
 
-**总体判断**：架构与安全设计质量较高；Stage 1/2/3a/3b/3c/4/5 已通过 pytest 与 ruff。当前仍不能声称可长期接入真实 QQ：NapCat/Lagrange 实测和 30～60 分钟 mock 重启一致性验收尚未完成。
+**总体判断**：架构与安全设计质量较高；Stage 1/2/3a/3b/3c/4/5 与国内 Provider 路由已通过 pytest 与 ruff。NapCat HTTP 动作、正向 WS 连通性、真实群消息接收和文本发送已完成受控验收；当前仍不能声称可长期接入真实 QQ：出站 @/引用、媒体动作、断线重连和 30～60 分钟 mock 重启一致性验收尚未完成。
 
 ## 四、问题清单（按优先级）
 
@@ -156,11 +157,12 @@ Stage 1 工程化、Stage 2 稳健全链路、Stage 3a 表情媒体、Stage 3b �
 
 - **mock 稳定性**：连续运行 30～60 分钟，覆盖消息、@、拍一拍、潜水、记忆、表情、限流、defer 和多轮工具调用。
 - **重启一致性**：确认调度状态、会话历史、记忆、学习笔记、每日发送计数和待处理唤醒在重启后可恢复。
-- **真实协议**：接入 NapCat / Lagrange 实测，并回填兼容性结论；未实测前不宣称兼容。
+- **真实协议**：NapCat 的 HTTP 动作、正向 WS、真实群收消息与文本发送已连通；继续完成出站 @/引用、表情/媒体发送、私聊与断线重连验收，再回填完整兼容性结论。
 
 ## 六、风险与依赖
 
 - `get_group_msg_history` 是 NapCat 扩展动作，Lagrange / 其他实现未验证，接入前需实测。
+- NapCat 已确认 HTTP 动作、正向 WS、真实群收消息和文本发送可用；出站 @/引用、媒体动作、私聊和长时间断线恢复仍未实测。
 - OpenAI 兼容 API 对 tool_calls 的行为差异较大，问题 6 的现实触发率取决于模型是否会一次输出多个工具调用。
 - Windows 控制台日志已统一 UTF-8；残留风险是容器/代理重定向环境下终端本身无法解码。
 - 仓库已 `git init` 但尚无首次提交，所有改动仍是 untracked。项目方决定提交时机。
@@ -209,3 +211,14 @@ Stage 1 工程化、Stage 2 稳健全链路、Stage 3a 表情媒体、Stage 3b �
 - 配置校验：`config.example.json` 可解析；`llm.maxTokens=200`、`scheduler.batchWindowMs=8000`、`scheduler.wakeProbability=0.04`、`scheduler.cooldownSeconds=90`，`tokenBudget` 的 12/28/160/1600 与契约一致
 - 聚焦验收：20 条事件只保留最近 12 条、连续 4 条相同消息合并、重复工具结果压缩且保留配对、最终模型步骤 tools 为空、历史不超过 28 条、mock/OpenAI usage 汇总写入 `wake_log`、usage 写库失败不阻断会话均通过
 - mock 端到端：尚未执行 30～60 分钟连续验收，Stage 6 补做
+
+## 十三、验证记录（2026-09-10，国内 Provider 路由与 NapCat 连通性）
+
+- `pytest -q`：149 passed，1 个 FastAPI TestClient 上游弃用警告
+- `ruff check .`：All checks passed
+- `pyright`：`.venv` 中未安装，当前无法执行
+- Provider 验收：DeepSeek、智谱、通义、Moonshot、硅基流动显式配置可解析；命名 Provider 缺失 Key、未知 fallback、自引用/重复 fallback、明文 Key、远端 HTTP 地址均被拒绝；主 Provider 成功不降级，限流/超时/不可用按顺序最多切换一次，鉴权/上下文/无效请求不切换
+- 配置兼容：旧版扁平 OpenAI-compatible 配置可继续构建，本机 OpenCode 代理配置构建通过
+- NapCat：`get_version_info` HTTP 200，返回 `NapCat.Onebot 4.18.19`、protocol v11；正向 WS 鉴权连接成功并收到生命周期事件
+- 真实群文本链路：本地审计记录显示 1 个非 mock 群会话、1 次 `mention` 唤醒、5 次 `send_group_message` 安全放行，且没有发送失败记录；会话工具调用中未出现 `qq_reply` 或 `sticker_send`
+- 尚未执行：出站 @/引用回复、表情/媒体发送、私聊出站、断线重连和 30～60 分钟重启一致性验收

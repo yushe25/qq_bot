@@ -259,6 +259,7 @@ python scripts/onebot_check.py
 | `safety.maxSendsPerDay` | 每会话每日发送上限，熔断后需控制台恢复 | `200` |
 | `safety.maxMessageChars` | 单条出站文本最大字符数 | `200` |
 | `console.host` / `console.port` | 控制台监听地址 | `127.0.0.1:3100` |
+| `console.token` | 控制台访问 Token；为空时只放行回环地址来源 | 空 |
 | `storage.databasePath` | SQLite 状态库路径 | `state/qqf.db` |
 | `personaPath` | 人格 YAML 路径 | `personas/default.yaml` |
 
@@ -277,7 +278,12 @@ python scripts/onebot_check.py
 - `GET /api/audit`、`GET /api/wake-logs`
 - `WS /ws/live`：实时事件流
 
-默认只允许本机访问；设置 `QQF_CONSOLE_TOKEN` 后，HTTP API 需要 `Authorization: Bearer <token>`。
+默认只允许本机访问。未配置 `console.token` 时，只有来自回环地址（`127.0.0.1`、`::1`、
+`localhost`）的请求被放行，其他来源一律返回 `401 loophole blocked`；此模式下本机上的任何
+进程和任何用户都能读写控制台（唤醒、暂停、改记忆、清学习数据）。
+设置 `QQF_CONSOLE_TOKEN`（或 `console.token`）后，HTTP API 与 WebSocket 需要
+`Authorization: Bearer <token>`，也接受 `?token=<token>` 查询参数；把 token 放在地址栏
+等于明文出现在浏览器历史与访问日志里，只在本机临时调试时使用。
 
 ## 目录结构
 

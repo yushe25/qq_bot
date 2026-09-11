@@ -15,7 +15,7 @@ def test_token_budget_defaults_are_conservative() -> None:
     config = AppConfig()
 
     assert config.llm.max_tokens <= 200
-    assert config.scheduler.batch_window_ms >= 8000
+    assert config.scheduler.batch_window_ms == 8000
     assert config.scheduler.wake_probability <= 0.04
     assert config.scheduler.cooldown_seconds >= 90
     assert 10 <= config.token_budget.wake_messages <= 12

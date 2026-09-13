@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -141,6 +142,96 @@ class WakeInput:
     deferred: bool = False
     defer_until_active: bool = False
     phase_ready: bool = False
+
+
+def wake_input_to_json(wake: WakeInput) -> str:
+    payload = {
+        "category": wake.category.value,
+        "reason": wake.reason,
+        "events": [
+            {
+                "event_id": event.event_id,
+                "session_id": event.session_id,
+                "timestamp": event.timestamp,
+                "sender_id": event.sender_id,
+                "sender_name": event.sender_name,
+                "kind": event.kind,
+                "segments": [
+                    {"kind": segment.kind, "data": segment.data}
+                    for segment in event.segments
+                ],
+                "text": event.text,
+                "bot_id": event.bot_id,
+            }
+            for event in wake.events
+        ],
+        "probability": wake.probability,
+        "deferred": wake.deferred,
+        "defer_until_active": wake.defer_until_active,
+        "phase_ready": wake.phase_ready,
+    }
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def wake_input_from_json(session_id: str, payload: str) -> WakeInput | None:
+    try:
+        data = json.loads(payload)
+        if not isinstance(data, dict):
+            return None
+        category = TriggerCategory(str(data["category"]))
+        events_data = data.get("events", [])
+        if not isinstance(events_data, list):
+            return None
+        events: list[NormalizedEvent] = []
+        for item in events_data:
+            if not isinstance(item, dict):
+                return None
+            segments_data = item.get("segments", [])
+            if not isinstance(segments_data, list):
+                return None
+            segments: list[MessageSegment] = []
+            for segment in segments_data:
+                if not isinstance(segment, dict):
+                    return None
+                segment_data = segment.get("data", {})
+                if not isinstance(segment_data, dict):
+                    return None
+                segments.append(
+                    MessageSegment(
+                        kind=str(segment.get("kind", "")),
+                        data=dict(segment_data),
+                    )
+                )
+            event_session_id = str(item.get("session_id", ""))
+            if event_session_id and event_session_id != session_id:
+                return None
+            events.append(
+                NormalizedEvent(
+                    event_id=str(item.get("event_id", "")),
+                    session_id=session_id,
+                    timestamp=float(item.get("timestamp", 0.0)),
+                    sender_id=str(item.get("sender_id", "")),
+                    sender_name=str(item.get("sender_name", "")),
+                    kind=str(item.get("kind", "")),
+                    segments=tuple(segments),
+                    text=str(item.get("text", "")),
+                    raw={},
+                    bot_id=str(item.get("bot_id", "")),
+                )
+            )
+        probability = data.get("probability")
+        return WakeInput(
+            session_id=session_id,
+            category=category,
+            reason=str(data["reason"]),
+            events=tuple(events),
+            probability=float(probability) if probability is not None else None,
+            deferred=bool(data.get("deferred", False)),
+            defer_until_active=bool(data.get("defer_until_active", False)),
+            phase_ready=bool(data.get("phase_ready", False)),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
 
 
 @dataclass(frozen=True)

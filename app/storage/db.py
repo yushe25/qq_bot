@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from app.domain.types import Session, now_ms
+from app.domain.types import Session, WakeInput, now_ms, wake_input_from_json, wake_input_to_json
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -111,7 +111,64 @@ CREATE TABLE IF NOT EXISTS learning_notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_learning_notes_session ON learning_notes(session_id, expires_at);
+
+CREATE TABLE IF NOT EXISTS pending_wakes (
+    session_id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    events_json TEXT NOT NULL DEFAULT '[]',
+    probability REAL,
+    deferred INTEGER NOT NULL DEFAULT 0,
+    defer_until_active INTEGER NOT NULL DEFAULT 0,
+    phase_ready INTEGER NOT NULL DEFAULT 0,
+    next_wake_at REAL NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_wakes_due
+    ON pending_wakes(next_wake_at, session_id);
 """
+
+_UPSERT_SESSION_SQL = """
+INSERT INTO sessions (
+    id, scene_type, scene_id, state, persona_id,
+    next_wake_at, cooldown_until, last_wake_at,
+    last_message_at, wake_count, conversation, pending_output, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+    scene_type = excluded.scene_type,
+    scene_id = excluded.scene_id,
+    state = excluded.state,
+    persona_id = excluded.persona_id,
+    next_wake_at = excluded.next_wake_at,
+    cooldown_until = excluded.cooldown_until,
+    last_wake_at = excluded.last_wake_at,
+    last_message_at = excluded.last_message_at,
+    wake_count = excluded.wake_count,
+    conversation = excluded.conversation,
+    pending_output = excluded.pending_output,
+    updated_at = excluded.updated_at
+"""
+
+
+def _session_params(session: Session) -> tuple[Any, ...]:
+    data = session.to_dict()
+    return (
+        data["id"],
+        data["scene_type"],
+        data["scene_id"],
+        data["state"],
+        data["persona_id"],
+        data["next_wake_at"],
+        data["cooldown_until"],
+        data["last_wake_at"],
+        data["last_message_at"],
+        data["wake_count"],
+        _json(data["conversation"]),
+        _json(data["pending_output"]),
+        now_ms(),
+    )
 
 
 class StateStore:
@@ -134,44 +191,7 @@ class StateStore:
                 await asyncio.to_thread(conn.close)
 
     async def upsert_session(self, session: Session) -> None:
-        data = session.to_dict()
-        await self._execute(
-            """
-            INSERT INTO sessions (
-                id, scene_type, scene_id, state, persona_id,
-                next_wake_at, cooldown_until, last_wake_at,
-                last_message_at, wake_count, conversation, pending_output, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                scene_type = excluded.scene_type,
-                scene_id = excluded.scene_id,
-                state = excluded.state,
-                persona_id = excluded.persona_id,
-                next_wake_at = excluded.next_wake_at,
-                cooldown_until = excluded.cooldown_until,
-                last_wake_at = excluded.last_wake_at,
-                last_message_at = excluded.last_message_at,
-                wake_count = excluded.wake_count,
-                conversation = excluded.conversation,
-                pending_output = excluded.pending_output,
-                updated_at = excluded.updated_at
-            """,
-            (
-                data["id"],
-                data["scene_type"],
-                data["scene_id"],
-                data["state"],
-                data["persona_id"],
-                data["next_wake_at"],
-                data["cooldown_until"],
-                data["last_wake_at"],
-                data["last_message_at"],
-                data["wake_count"],
-                _json(data["conversation"]),
-                _json(data["pending_output"]),
-                now_ms(),
-            ),
-        )
+        await self._execute(_UPSERT_SESSION_SQL, _session_params(session))
 
     async def load_sessions(self) -> list[Session]:
         rows = await self._query("SELECT * FROM sessions ORDER BY id", ())
@@ -186,6 +206,52 @@ class StateStore:
                         row[column] = []
             sessions.append(Session.from_dict(row))
         return sessions
+
+    async def save_deferred_wake(self, session: Session, wake: WakeInput) -> None:
+        async with self._lock:
+            conn = self._connection()
+            await asyncio.to_thread(_save_deferred_wake_sync, conn, session, wake)
+
+    async def load_pending_wakes(self) -> list[tuple[str, float, WakeInput]]:
+        rows = await self._query(
+            """
+            SELECT p.session_id, p.events_json, p.next_wake_at, s.id AS session_exists
+            FROM pending_wakes p
+            LEFT JOIN sessions s ON s.id = p.session_id
+            ORDER BY p.next_wake_at ASC
+            """,
+            (),
+        )
+        pending: list[tuple[str, float, WakeInput]] = []
+        rejected: list[tuple[str, str]] = []
+        for row in rows:
+            session_id = str(row["session_id"])
+            if row.get("session_exists") is None:
+                rejected.append((session_id, "orphan session"))
+                continue
+            wake = wake_input_from_json(session_id, str(row["events_json"]))
+            if wake is None:
+                rejected.append((session_id, "invalid events_json"))
+                continue
+            pending.append((session_id, float(row["next_wake_at"]), wake))
+        for session_id, reason in rejected:
+            await self.delete_pending_wake(session_id)
+            await self.append_audit(
+                action="pending_wake_rejected",
+                detail=reason,
+                result="deleted",
+                session_id=session_id,
+                actor_type="scheduler",
+            )
+        return pending
+
+    async def delete_pending_wake(self, session_id: str) -> None:
+        await self._execute("DELETE FROM pending_wakes WHERE session_id = ?", (session_id,))
+
+    async def increment_pending_wake_attempts(self, session_id: str) -> int:
+        async with self._lock:
+            conn = self._connection()
+            return await asyncio.to_thread(_increment_pending_wake_attempts_sync, conn, session_id)
 
     async def upsert_memory(
         self,
@@ -631,6 +697,71 @@ def _query_sync(conn: sqlite3.Connection, sql: str, params: Sequence[Any]) -> li
     rows = [dict(row) for row in cursor.fetchall()]
     cursor.close()
     return rows
+
+
+def _upsert_session_sync(conn: sqlite3.Connection, session: Session) -> None:
+    cursor = conn.execute(_UPSERT_SESSION_SQL, _session_params(session))
+    cursor.close()
+
+
+def _save_deferred_wake_sync(conn: sqlite3.Connection, session: Session, wake: WakeInput) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        _upsert_session_sync(conn, session)
+        cursor = conn.execute(
+            """
+            INSERT INTO pending_wakes (
+                session_id, category, reason, events_json, probability,
+                deferred, defer_until_active, phase_ready,
+                next_wake_at, attempts, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                category = excluded.category,
+                reason = excluded.reason,
+                events_json = excluded.events_json,
+                probability = excluded.probability,
+                deferred = excluded.deferred,
+                defer_until_active = excluded.defer_until_active,
+                phase_ready = excluded.phase_ready,
+                next_wake_at = excluded.next_wake_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                session.id,
+                wake.category.value,
+                wake.reason,
+                wake_input_to_json(wake),
+                wake.probability,
+                int(wake.deferred),
+                int(wake.defer_until_active),
+                int(wake.phase_ready),
+                session.next_wake_at,
+                now_ms(),
+            ),
+        )
+        cursor.close()
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def _increment_pending_wake_attempts_sync(conn: sqlite3.Connection, session_id: str) -> int:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "UPDATE pending_wakes SET attempts = attempts + 1, updated_at = ? WHERE session_id = ?",
+            (now_ms(), session_id),
+        )
+        row = conn.execute(
+            "SELECT attempts FROM pending_wakes WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        conn.execute("COMMIT")
+        return int(row["attempts"]) if row is not None else 0
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _migrate_schema(conn: sqlite3.Connection) -> None:

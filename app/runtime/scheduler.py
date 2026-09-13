@@ -67,10 +67,23 @@ class Scheduler:
         self._pending_observations: dict[str, list[NormalizedEvent]] = {}
         self._running: set[str] = set()
         self._stopped = False
+        self._started = False
         self._question_re = re.compile(r"[?？]+|吗|呢|谁|怎么|为什么|啥|哪|几")
         self._schedule = load_schedule_profile(config.persona_path)
 
-    def ingest(self, event: NormalizedEvent) -> None:
+    async def start(self) -> None:
+        if self._started:
+            return
+        pending = await self.store.load_pending_wakes()
+        for session_id, next_wake_at, wake in pending:
+            session = self.sessions.get(session_id)
+            if session is None or session_id in self._running:
+                continue
+            self._pending_wakes[session_id] = wake
+            session.next_wake_at = next_wake_at
+        self._started = True
+
+    async def ingest(self, event: NormalizedEvent) -> None:
         scene_type, scene_id = _split_session(event.session_id)
         if not self.whitelist.is_allowed(scene_type, scene_id, event.sender_id):
             self._publish(
@@ -317,6 +330,7 @@ class Scheduler:
 
     async def _decide_and_run(self, session: Session, wake: WakeInput) -> None:
         if session.state == SessionState.PAUSED:
+            await self.store.delete_pending_wake(session.id)
             await self._log_wake(wake, "paused")
             return
         if len(self._running) >= self.config.scheduler.max_concurrent:
@@ -376,6 +390,7 @@ class Scheduler:
             await self._defer(session, delay_ms, "限流延时重试", wake)
             await self._log_wake(wake, "deferred", session.next_wake_at, probability)
         else:
+            await self.store.delete_pending_wake(session.id)
             await self._log_wake(wake, "no_action", None, probability)
 
     def _dispatch(self, session: Session, wake: WakeInput) -> None:
@@ -398,8 +413,33 @@ class Scheduler:
                 )
             except Exception:
                 logger.exception("failed to record token usage for %s", session.id)
+            await self.store.delete_pending_wake(session.id)
         except Exception:
             logger.exception("wake failed for %s", session.id)
+            attempts = await self.store.increment_pending_wake_attempts(session.id)
+            if attempts <= 0:
+                await self.store.delete_pending_wake(session.id)
+            elif attempts >= 3:
+                await self.store.delete_pending_wake(session.id)
+                await self.store.append_audit(
+                    action="pending_wake_failed",
+                    detail=f"attempts={attempts}",
+                    result="deleted",
+                    session_id=session.id,
+                    actor_type="scheduler",
+                )
+            else:
+                session.state = SessionState.IDLE
+                session.next_wake_at = now_ms() + min(300_000, 1_000 * (2**attempts))
+                self._pending_wakes[session.id] = wake
+                await self.sessions.save(session)
+                await self.store.append_audit(
+                    action="pending_wake_retry",
+                    detail=f"attempts={attempts}",
+                    result="scheduled",
+                    session_id=session.id,
+                    actor_type="scheduler",
+                )
         finally:
             self._running.discard(session.id)
             current = self.sessions.get(session.id)
@@ -419,7 +459,9 @@ class Scheduler:
             session.state = SessionState.IDLE
         if wake is not None:
             self._pending_wakes[session.id] = wake
-        await self.sessions.save(session)
+            await self.store.save_deferred_wake(session, wake)
+        else:
+            await self.sessions.save(session)
         logger.info("session %s deferred (%s) until %.0f", session.id, reason, session.next_wake_at)
 
     async def _log_wake(

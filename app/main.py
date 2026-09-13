@@ -58,6 +58,7 @@ class AppRuntime:
     async def start(self) -> None:
         await self.store.init()
         await self.sessions.load()
+        await self.scheduler.start()
         if isinstance(self.gateway, OneBotV11Gateway):
             self.gateway.on_event(self.scheduler.ingest)
             await self.gateway.connect()

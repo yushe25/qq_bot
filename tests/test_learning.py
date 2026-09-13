@@ -104,8 +104,8 @@ async def _seed_observations(stack: TestStack, session_id: str, count: int = 2) 
 async def test_ingest_captures_only_group_text_observations(stack: TestStack) -> None:
     stack.config.learning.exclude_members = ["10002"]
     session_id = "group:100000"
-    stack.scheduler.ingest(_event(session_id, "纯文本消息", event_id="text-1"))
-    stack.scheduler.ingest(
+    await stack.scheduler.ingest(_event(session_id, "纯文本消息", event_id="text-1"))
+    await stack.scheduler.ingest(
         _event(
             session_id,
             "[图片]",
@@ -113,9 +113,9 @@ async def test_ingest_captures_only_group_text_observations(stack: TestStack) ->
             segments=(MessageSegment(kind="image", data={"file": "1.jpg"}),),
         )
     )
-    stack.scheduler.ingest(_event(session_id, "被排除成员", sender_id="10002", event_id="excluded-1"))
-    stack.scheduler.ingest(_event("private:100001", "私聊不进学习", event_id="private-1", kind="private"))
-    stack.scheduler.ingest(
+    await stack.scheduler.ingest(_event(session_id, "被排除成员", sender_id="10002", event_id="excluded-1"))
+    await stack.scheduler.ingest(_event("private:100001", "私聊不进学习", event_id="private-1", kind="private"))
+    await stack.scheduler.ingest(
         _event(session_id, "自己的消息", sender_id="31415926", bot_id="31415926", event_id="own-1")
     )
 
@@ -130,7 +130,7 @@ async def test_scheduler_triggers_learning_after_interval_and_message_count(stac
     stack.config.learning.min_new_messages = 1
     stack.learning.provider = _NotesProvider(notes=[_note()])
     session_id = "group:100000"
-    stack.scheduler.ingest(_event(session_id, "晚上一起开黑？", event_id="trigger-1"))
+    await stack.scheduler.ingest(_event(session_id, "晚上一起开黑？", event_id="trigger-1"))
 
     await stack.scheduler.tick()
     await stack.learning.wait_idle()

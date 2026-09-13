@@ -65,6 +65,36 @@ def test_rate_limiter_has_capacity_checks_without_consuming() -> None:
     assert not limiter2.allow("s1", now=0.0)
 
 
+def test_rate_limiter_enforces_separate_session_hour_bucket() -> None:
+    limiter = RateLimiter(
+        max_per_minute=10,
+        max_per_hour=10,
+        max_per_session_per_hour=2,
+    )
+
+    assert limiter.allow("s1", now=0.0)
+    assert limiter.allow("s1", now=1.0)
+    assert not limiter.allow("s1", now=2.0)
+    assert limiter.allow("s2", now=2.0)
+
+    assert limiter.next_available_at("s1", now=10.0) == 3600.0
+
+
+def test_rate_limiter_reset_clears_session_hour_bucket() -> None:
+    limiter = RateLimiter(
+        max_per_minute=10,
+        max_per_hour=10,
+        max_per_session_per_hour=1,
+    )
+
+    assert limiter.allow("s1", now=0.0)
+    assert not limiter.allow("s1", now=1.0)
+
+    limiter.reset()
+
+    assert limiter.allow("s1", now=2.0)
+
+
 async def test_safety_pipeline_sends_allowed_message(stack: TestStack) -> None:
     session = Session(id="group:100000", scene_type="group", scene_id="100000")
     context = ToolContext(

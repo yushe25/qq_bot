@@ -15,18 +15,18 @@ class MessageDedupe:
     def add(self, event: NormalizedEvent) -> bool:
         now = time.time()
         self._prune(now)
-        key = self._key(event, now)
+        key = self._key(event)
         if key in self._seen:
             return False
         self._seen[key] = now
         return True
 
-    def _key(self, event: NormalizedEvent, now: float) -> str:
+    def _key(self, event: NormalizedEvent) -> str:
         if event.event_id:
             return f"id:{event.event_id}"
         raw = f"{event.session_id}|{event.sender_id}|{event.text}|{event.timestamp}"
         digest = hashlib.sha256(raw.encode("utf-8", errors="ignore")).hexdigest()[:20]
-        return f"fallback:{int(now // 60)}:{digest}"
+        return f"fallback:{digest}"
 
     def _prune(self, now: float) -> None:
         if len(self._seen) <= self.max_entries:

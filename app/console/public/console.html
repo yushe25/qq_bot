@@ -58,6 +58,23 @@
     overflow: hidden;
   }
   .panel h2 { margin: 0; padding: 10px 14px; font-size: 14px; border-bottom: 1px solid var(--line); }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .controls label { color: var(--muted); font-size: 12px; }
+  .controls select {
+    min-width: 180px;
+    border: 1px solid var(--line);
+    background: #fff;
+    color: var(--ink);
+    border-radius: 5px;
+    padding: 5px 8px;
+    font: inherit;
+  }
   .session {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
@@ -103,6 +120,8 @@
   }
   .feed .t { color: var(--muted); }
   .feed .msg { min-width: 0; overflow-wrap: anywhere; }
+  .feed .event-title { display: block; margin-bottom: 2px; }
+  .feed .detail { display: block; color: var(--muted); font-size: 11px; margin-top: 2px; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #e8ebe6; vertical-align: top; }
   th { background: #f1f3ef; font-weight: 600; white-space: nowrap; }
@@ -137,6 +156,20 @@
     </div>
   </section>
   <section class="panel">
+    <h2>唤醒日志</h2>
+    <div class="controls">
+      <label for="wake-session">会话</label>
+      <select id="wake-session"><option value="">全部会话</option></select>
+      <button id="wake-refresh" type="button">刷新</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead><tr><th>时间</th><th>会话</th><th>类别</th><th>判定</th><th>原因</th><th>概率</th><th>下次</th><th>Token</th></tr></thead>
+        <tbody id="wake-logs"></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="panel">
     <h2>审计</h2>
     <div style="overflow-x:auto">
       <table>
@@ -164,6 +197,31 @@ function fmt(ms) {
   return date.toLocaleString();
 }
 
+function fmtMs(ms) {
+  return fmt(Number(ms || 0) / 1000);
+}
+
+function option(value, text) {
+  const item = document.createElement('option');
+  item.value = value;
+  item.textContent = text;
+  return item;
+}
+
+function syncSessionFilter(sessions) {
+  const select = $('#wake-session');
+  const selected = select.value;
+  select.replaceChildren(option('', '全部会话'));
+  for (const session of sessions) {
+    select.appendChild(option(session.id, session.id));
+  }
+  if (sessions.some((session) => session.id === selected)) {
+    select.value = selected;
+  } else {
+    select.value = '';
+  }
+}
+
 function badge(session) {
   const span = document.createElement('span');
   span.className = 'badge';
@@ -186,7 +244,7 @@ async function api(path, options = {}) {
 }
 
 async function refresh() {
-  await Promise.all([loadHealth(), loadSessions(), loadAudit()]);
+  await Promise.all([loadHealth(), loadSessions(), loadWakeLogs(), loadAudit()]);
 }
 
 async function loadHealth() {
@@ -203,6 +261,7 @@ async function loadHealth() {
 
 async function loadSessions() {
   const data = await api('/api/sessions');
+  syncSessionFilter(data.sessions);
   const box = $('#sessions');
   box.replaceChildren();
   if (!data.sessions.length) {
@@ -254,6 +313,46 @@ async function loadSessions() {
   }
 }
 
+async function loadWakeLogs() {
+  const sessionId = $('#wake-session').value;
+  const query = new URLSearchParams({ limit: '100' });
+  if (sessionId) query.set('session_id', sessionId);
+  const data = await api(`/api/wake-logs?${query}`);
+  const rows = $('#wake-logs');
+  rows.replaceChildren();
+  if (!data.items.length) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 8;
+    td.className = 'empty';
+    td.textContent = '暂无唤醒日志';
+    tr.appendChild(td);
+    rows.appendChild(tr);
+    return;
+  }
+  for (const item of data.items) {
+    const tr = document.createElement('tr');
+    const probability = item.probability == null ? '-' : Number(item.probability).toFixed(2);
+    const tokens = item.total_tokens ? `${item.prompt_tokens || 0}/${item.completion_tokens || 0}/${item.total_tokens}` : '-';
+    const values = [
+      fmtMs(item.ts),
+      item.session_id || '-',
+      item.category || '-',
+      item.decided || '-',
+      item.reason || '-',
+      probability,
+      fmtMs(item.next_wake_at),
+      tokens,
+    ];
+    for (const value of values) {
+      const td = document.createElement('td');
+      td.textContent = value;
+      tr.appendChild(td);
+    }
+    rows.appendChild(tr);
+  }
+}
+
 async function loadAudit() {
   const data = await api('/api/audit?limit=100');
   const rows = $('#audit');
@@ -291,6 +390,25 @@ async function loadAudit() {
   }
 }
 
+const eventLabels = {
+  'wake-log': '唤醒判定',
+  wake: '开始唤醒',
+  'agent-step': '工具调用',
+  'agent-error': '模型错误',
+  outgoing: '出站消息',
+  'session-updated': '会话状态',
+  'incoming-skipped': '入站跳过',
+  'learning-updated': '学习数据更新',
+  'learning-note-rejected': '学习笔记拒绝',
+};
+
+function feedFields(event) {
+  return Object.entries(event)
+    .filter(([key, value]) => key !== 'type' && ['string', 'number', 'boolean'].includes(typeof value))
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(' · ');
+}
+
 function renderFeed(event) {
   const feed = $('#feed');
   if (feed.children.length > 80) feed.replaceChildren();
@@ -298,10 +416,46 @@ function renderFeed(event) {
   const time = document.createElement('span');
   time.className = 't';
   time.textContent = event.type;
-  const msg = document.createElement('span');
+  const msg = document.createElement('div');
   msg.className = 'msg';
-  const summary = event.session_id ? `${event.session_id} · ` : '';
-  msg.textContent = `${summary}${JSON.stringify(event).slice(0, 180)}`;
+  const title = document.createElement('strong');
+  title.className = 'event-title';
+  title.textContent = eventLabels[event.type] || event.type;
+  const summary = document.createElement('span');
+  const detail = document.createElement('span');
+  detail.className = 'detail';
+
+  if (event.type === 'wake-log') {
+    summary.textContent = `${event.reason || '-'} · ${event.decided || '-'}`;
+    detail.textContent = [
+      event.session_id,
+      event.category,
+      event.next_wake_at ? `下次 ${fmtMs(event.next_wake_at)}` : '',
+    ].filter(Boolean).join(' · ');
+  } else if (event.type === 'wake') {
+    summary.textContent = event.reason || '-';
+    detail.textContent = [event.session_id, event.category].filter(Boolean).join(' · ');
+  } else if (event.type === 'agent-step') {
+    summary.textContent = `${event.tool || '-'} · ${event.ok ? '成功' : '失败'}`;
+    detail.textContent = [`第 ${event.step || '-'} 步`, event.message].filter(Boolean).join(' · ');
+  } else if (event.type === 'agent-error') {
+    summary.textContent = event.error || '-';
+    detail.textContent = [event.session_id, `第 ${event.step || '-'} 步`].filter(Boolean).join(' · ');
+  } else if (event.type === 'outgoing') {
+    summary.textContent = event.text || '-';
+    detail.textContent = [event.session_id, event.scene_id].filter(Boolean).join(' · ');
+  } else if (event.type === 'session-updated' && event.session) {
+    summary.textContent = `${event.session.id} · ${event.session.state}`;
+    detail.textContent = `唤醒 ${event.session.wake_count} 次`;
+  } else if (event.type === 'incoming-skipped') {
+    summary.textContent = event.reason || '-';
+    detail.textContent = [event.session_id, event.text].filter(Boolean).join(' · ');
+  } else {
+    summary.textContent = feedFields(event) || '-';
+  }
+
+  msg.append(title, summary);
+  if (detail.textContent) msg.appendChild(detail);
   li.append(time, msg);
   feed.prepend(li);
 }
@@ -334,10 +488,13 @@ function connect() {
     const event = JSON.parse(message.data);
     if (event.type !== 'ping') renderFeed(event);
     if (event.type === 'session-updated') loadSessions();
+    if (event.type === 'wake-log') loadWakeLogs();
   };
   ws = target;
 }
 
+$('#wake-session').addEventListener('change', loadWakeLogs);
+$('#wake-refresh').addEventListener('click', loadWakeLogs);
 refresh();
 connect();
 setInterval(loadHealth, 10000);

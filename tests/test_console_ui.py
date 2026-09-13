@@ -1,0 +1,15 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def test_console_uses_wake_logs_and_structured_event_feed() -> None:
+    page = (Path(__file__).resolve().parents[1] / "app" / "console" / "public" / "console.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "id=\"wake-logs\"" in page
+    assert "/api/wake-logs?" in page
+    assert "async function loadWakeLogs()" in page
+    assert "eventLabels" in page
+    assert "JSON.stringify(event)" not in page

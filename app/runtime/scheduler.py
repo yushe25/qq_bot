@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 import re
+import time
 from dataclasses import replace
 from typing import Any
 
@@ -12,7 +13,7 @@ from app.domain.types import NormalizedEvent, Session, SessionState, TriggerCate
 from app.memory.store import MemoryStore
 from app.runtime.bus import EventBus
 from app.runtime.learning import LearningRunner
-from app.runtime.message_dedupe import MessageDedupe
+from app.runtime.message_dedupe import MessageDedupe, message_dedupe_key
 from app.runtime.orchestrator import Orchestrator
 from app.runtime.schedule import (
     load_schedule_profile,
@@ -68,6 +69,7 @@ class Scheduler:
         self._running: set[str] = set()
         self._stopped = False
         self._started = False
+        self._last_dedupe_prune = 0.0
         self._question_re = re.compile(r"[?？]+|吗|呢|谁|怎么|为什么|啥|哪|几")
         self._schedule = load_schedule_profile(config.persona_path)
 
@@ -93,7 +95,11 @@ class Scheduler:
             return
         if event.bot_id and event.sender_id and event.sender_id == event.bot_id:
             return
-        if not self.dedupe.add(event):
+        if not await self.store.claim_event(
+            message_dedupe_key(event),
+            time.time(),
+            self.dedupe.ttl_seconds,
+        ):
             return
         self._collect_observation(event)
         session = self.sessions.ensure_session(scene_type, scene_id)
@@ -117,6 +123,10 @@ class Scheduler:
 
     async def tick(self) -> None:
         now = now_ms()
+        now_s = time.time()
+        if now_s - self._last_dedupe_prune >= 60:
+            await self.store.prune_event_dedupe(now_s, self.dedupe.max_entries)
+            self._last_dedupe_prune = now_s
         await self._flush_observations()
         await self._dispatch_learning(now)
         for session_id, events in list(self._inbox.items()):

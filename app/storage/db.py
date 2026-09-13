@@ -128,6 +128,15 @@ CREATE TABLE IF NOT EXISTS pending_wakes (
 
 CREATE INDEX IF NOT EXISTS idx_pending_wakes_due
     ON pending_wakes(next_wake_at, session_id);
+
+CREATE TABLE IF NOT EXISTS event_dedupe (
+    key TEXT PRIMARY KEY,
+    seen_at REAL NOT NULL,
+    expires_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_dedupe_expiry
+    ON event_dedupe(expires_at);
 """
 
 _UPSERT_SESSION_SQL = """
@@ -252,6 +261,16 @@ class StateStore:
         async with self._lock:
             conn = self._connection()
             return await asyncio.to_thread(_increment_pending_wake_attempts_sync, conn, session_id)
+
+    async def claim_event(self, key: str, now_s: float, ttl_seconds: int) -> bool:
+        async with self._lock:
+            conn = self._connection()
+            return await asyncio.to_thread(_claim_event_sync, conn, key, now_s, ttl_seconds)
+
+    async def prune_event_dedupe(self, now_s: float, max_entries: int) -> int:
+        async with self._lock:
+            conn = self._connection()
+            return await asyncio.to_thread(_prune_event_dedupe_sync, conn, now_s, max_entries)
 
     async def upsert_memory(
         self,
@@ -759,6 +778,63 @@ def _increment_pending_wake_attempts_sync(conn: sqlite3.Connection, session_id: 
         ).fetchone()
         conn.execute("COMMIT")
         return int(row["attempts"]) if row is not None else 0
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def _claim_event_sync(conn: sqlite3.Connection, key: str, now_s: float, ttl_seconds: int) -> bool:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            "DELETE FROM event_dedupe WHERE key = ? AND expires_at <= ?",
+            (key, now_s),
+        )
+        cursor = conn.execute(
+            """
+            INSERT OR IGNORE INTO event_dedupe (key, seen_at, expires_at)
+            VALUES (?, ?, ?)
+            """,
+            (key, now_s, now_s + max(1, ttl_seconds)),
+        )
+        claimed = cursor.rowcount > 0
+        cursor.close()
+        conn.execute("COMMIT")
+        return claimed
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def _prune_event_dedupe_sync(conn: sqlite3.Connection, now_s: float, max_entries: int) -> int:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        expired_cursor = conn.execute(
+            "DELETE FROM event_dedupe WHERE expires_at <= ?",
+            (now_s,),
+        )
+        removed = max(0, expired_cursor.rowcount)
+        expired_cursor.close()
+        if max_entries <= 0:
+            count_cursor = conn.execute("DELETE FROM event_dedupe")
+            removed += max(0, count_cursor.rowcount)
+            count_cursor.close()
+        else:
+            count_cursor = conn.execute(
+                """
+                DELETE FROM event_dedupe
+                WHERE key NOT IN (
+                    SELECT key FROM event_dedupe
+                    ORDER BY seen_at DESC
+                    LIMIT ?
+                )
+                """,
+                (max_entries,),
+            )
+            removed += max(0, count_cursor.rowcount)
+            count_cursor.close()
+        conn.execute("COMMIT")
+        return removed
     except Exception:
         conn.execute("ROLLBACK")
         raise

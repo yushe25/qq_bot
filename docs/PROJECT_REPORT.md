@@ -130,13 +130,18 @@ console              FastAPI API + WS 实时流 + 单页控制台
 
 ### T-04A 验收发现（2026-09-13）
 
-19. **待处理唤醒未持久化**：`Scheduler._pending_wakes` 只在内存中保存
+19. ~~**待处理唤醒未持久化**：`Scheduler._pending_wakes` 只在内存中保存
     category、reason、events 和 defer flags。受控重启后原 deferred 上下文丢失，
     会退化成默认 scheduled wake。详见
-    `docs/acceptance/T-04A-stage6-mock-restart-20260913.md`。
-20. **去重指纹未跨重启保存**：`MessageDedupe._seen` 是纯内存字典。mock 重放相同
+    `docs/acceptance/T-04A-stage6-mock-restart-20260913.md`。~~
+    已修复（2026-09-13，`20daa04`）：pending wake 使用单事务持久化，启动时恢复，
+    执行成功或超过重试上限后清理。
+20. ~~**去重指纹未跨重启保存**：`MessageDedupe._seen` 是纯内存字典。mock 重放相同
     message/event ID 后，mention 和 sticker 会在重启后再次执行，并重复累加每日发送
-    和表情使用计数。详见同一验收记录。
+    和表情使用计数。详见同一验收记录。~~
+    已修复（2026-09-13，`1baf2cb`）：事件指纹原子写入 `event_dedupe`，按 TTL
+    和数量上限清理。修复后 30 分钟复验见
+    `docs/acceptance/T-04A-stage6-post-fix-20260913.md`。
 
 ## 五、优化方向
 

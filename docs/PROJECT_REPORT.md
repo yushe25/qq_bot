@@ -89,7 +89,7 @@ console              FastAPI API + WS 实时流 + 单页控制台
 ### P0 已修复（2026-09-08）
 
 1. **限流 defer 循环**（`app/runtime/scheduler.py:224`）
-   唤醒限流达到窗口上限后固定每 30 秒 defer 重试，而限流窗口最长 1 小时才释放。已修复：`RateLimiter.next_available_at()` 返回综合全局分钟、全局小时、会话分钟三个队列的下一次可用时间，`_defer` 按该时间对齐，不再每 30 秒刷日志/写库。
+   唤醒限流达到窗口上限后固定每 30 秒 defer 重试，而限流窗口最长 1 小时才释放。已修复：`RateLimiter.next_available_at()` 返回综合全局分钟、全局小时、会话分钟、会话小时四个队列的下一次可用时间，`_defer` 按该时间对齐，不再每 30 秒刷日志/写库。
 
 2. **工具结果 300 字符截断**（`app/runtime/orchestrator.py:224`）
    `_tool_result_text` 把 data JSON 截到 300 字符，历史/成员数据给模型的是残缺 JSON。已修复：`qq_get_group_history` 输出 `[message_id] 昵称(user_id): 文本` 逐行摘要，`qq_get_members` 输出 `昵称(user_id) [role]`，通用工具 JSON 上限现由 `tokenBudget.toolResultChars` 控制并默认截到 1600 字符。
@@ -112,7 +112,9 @@ console              FastAPI API + WS 实时流 + 单页控制台
 9. ~~无版本控制~~：已 `git init`；首次提交仍由项目方决定，当前仓库保持未提交状态。
 10. ~~无启动脚本 / CI~~：已补 `start.ps1`（mock/真实两种模式，`PYTHONUTF8=1`）与 GitHub Actions（pytest + ruff + pyright）。
 11. ~~依赖浮版本~~：已生成 `uv.lock`。
-12. pyright 声明未执行：安装并跑通 basic 级别，清理测试中的 `type: ignore`。
+12. ~~pyright 声明未执行：安装并跑通 basic 级别，清理测试中的 `type: ignore`。~~
+    已修复（2026-09-13）：使用锁定版本 `pyright 1.1.411` 跑通 basic，
+    当前为 `0 errors, 0 warnings`，测试中的 `type: ignore` 已清零。
 13. ~~日志乱码~~：`app/logging_setup.py` 显式 UTF-8 handler，启动脚本统一 `PYTHONUTF8=1`。
 14. ~~**文档引用断链**~~：README 与 AGENTS.md 已收敛到本项目现有的设计契约和 ADR，不再依赖同级旧项目文档；`get_group_msg_history` 为 NapCat 扩展，Lagrange 兼容性仍需实测标注。
 
@@ -121,7 +123,10 @@ console              FastAPI API + WS 实时流 + 单页控制台
 15. 发言冷却结束后不自排唤醒（`next_wake_at=0`），只有新消息才会再次触发，“主动冒泡”未闭环；冷却后应转 DIVING 并排下一次唤醒。
 16. ~~`memory_update` 运行时不校验 kind；记忆链路无 mock/测试覆盖。~~ 已补齐 kind、过期、衰减、快照限制和安全拒绝用例（2026-09-10）。
 17. 控制台已有 wake-logs API 但 UI 未使用；实时流直接展示原始 JSON。
-18. RateLimiter 每会话缺小时桶；dedupe fallback key 按分钟分桶，可能误杀真实重复消息。
+18. ~~RateLimiter 每会话缺小时桶；dedupe fallback key 按分钟分桶，可能误杀真实重复消息。~~
+    已修复（2026-09-13）：限流器增加每会话小时桶并纳入 `has_capacity` 与
+    `next_available_at`；无消息 ID 的去重键改为只基于会话、发送者、文本和事件时间，
+    不再混入接收分钟。
 
 ## 五、优化方向
 

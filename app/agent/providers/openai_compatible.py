@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from typing import Any
 
 import httpx
 
@@ -68,20 +69,35 @@ class OpenAICompatibleProvider:
         raise last_error
 
     def _parse_completion(self, body: dict[str, object]) -> ChatResult:
-        message = body["choices"][0]["message"]
+        choices = body.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("completion response is missing choices")
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            raise TypeError("completion choice is not an object")
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            raise TypeError("completion message is not an object")
         prompt_tokens, completion_tokens, total_tokens = _parse_usage(body)
         tool_calls = message.get("tool_calls")
-        if tool_calls:
+        if isinstance(tool_calls, list) and tool_calls:
             calls: list[ToolCall] = []
             for call in tool_calls:
-                raw_args = call.get("function", {}).get("arguments") or "{}"
+                if not isinstance(call, dict):
+                    raise TypeError("tool call is not an object")
+                function = call.get("function")
+                if not isinstance(function, dict):
+                    raise TypeError("tool call function is not an object")
+                raw_args = function.get("arguments")
                 try:
-                    args = json.loads(raw_args)
+                    args = json.loads(raw_args) if isinstance(raw_args, str) else {}
                 except json.JSONDecodeError:
-                    args = {"_error": raw_args}
+                    args = {"_error": raw_args if isinstance(raw_args, str) else "invalid arguments"}
+                if not isinstance(args, dict):
+                    args = {"_error": args}
                 calls.append(
                     ToolCall(
-                        name=str(call.get("function", {}).get("name", "")),
+                        name=str(function.get("name", "")),
                         arguments=args,
                         id=str(call.get("id") or ""),
                     )
@@ -132,7 +148,7 @@ def _as_non_negative_int(value: object) -> int:
     return 0
 
 
-def _to_openai(message: ChatMessage | dict[str, object]) -> dict[str, object]:
+def _to_openai(message: ChatMessage | dict[str, Any]) -> dict[str, object]:
     if isinstance(message, ChatMessage):
         item: dict[str, object] = {"role": message.role}
         if message.content is not None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
 import pytest
@@ -46,7 +47,7 @@ class TestStack:
 
 
 @pytest.fixture
-async def stack(tmp_path) -> TestStack:
+async def stack(tmp_path) -> AsyncIterator[TestStack]:
     db_path = tmp_path / "qqf.db"
     store = StateStore(str(db_path))
     await store.init()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 
 from app.agent.llm_provider import ChatRequest, ChatResult
 from app.config import LLMConfig
@@ -104,7 +105,7 @@ def _message_content(message: object) -> str:
     return str(value) if value is not None else ""
 
 
-def _has_tool_after_last_user(messages: list[object]) -> bool:
+def _has_tool_after_last_user(messages: Sequence[object]) -> bool:
     last_user_index = -1
     for index, message in enumerate(messages):
         if _message_role(message) == "user":
@@ -115,7 +116,7 @@ def _has_tool_after_last_user(messages: list[object]) -> bool:
     )
 
 
-def _last_user_content(messages: list[object]) -> str:
+def _last_user_content(messages: Sequence[object]) -> str:
     return next(
         (_message_content(message) for message in reversed(messages) if _message_role(message) == "user"),
         "",

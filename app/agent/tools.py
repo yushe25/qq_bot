@@ -93,14 +93,13 @@ async def execute_tool(ctx: ToolContext, call: ToolCall) -> ToolResult:
 
 async def _dispatch(ctx: ToolContext, call: ToolCall) -> ToolResult:
     name = call.name
-    shelf: dict[str, object] = {}
     if name == "qq_get_group_history":
         args = GetHistoryArgs.model_validate(call.arguments)
-        shelf = await ctx.gateway.get_group_history(ctx.session.scene_id, limit=args.limit)
-        return ToolResult(success=True, message="读取成功", data={"messages": shelf})
+        history = await ctx.gateway.get_group_history(ctx.session.scene_id, limit=args.limit)
+        return ToolResult(success=True, message="读取成功", data={"messages": history})
     if name == "qq_get_members":
-        shelf = await ctx.gateway.get_group_members(ctx.session.scene_id)
-        return ToolResult(success=True, message="读取成功", data={"members": shelf})
+        members = await ctx.gateway.get_group_members(ctx.session.scene_id)
+        return ToolResult(success=True, message="读取成功", data={"members": members})
     if name == "qq_send_group_message":
         args = SendGroupArgs.model_validate(call.arguments)
         if ctx.session.scene_type != "group" or args.group_id != ctx.session.scene_id:

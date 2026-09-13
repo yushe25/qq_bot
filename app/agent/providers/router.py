@@ -40,7 +40,7 @@ _CONTEXT_ERROR_MARKERS = (
 
 class ProviderRoutingError(RuntimeError):
     def __init__(self, code: ErrorCode, provider_id: str, detail: str = "") -> None:
-        self.code = code
+        self.code: ErrorCode = code
         self.provider_id = provider_id
         self.detail = detail
         message = f"provider {provider_id!r} failed: {code}"

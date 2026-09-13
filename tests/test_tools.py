@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from typing import cast
+
 from app.agent.tools import ToolContext, execute_tool
 from app.domain.types import ToolCall, TriggerCategory
+from app.platform.gateway import QQGateway
 from tests.conftest import TestStack
 
 
@@ -78,7 +81,7 @@ async def test_qq_reply_rejects_when_message_fetch_fails(stack: TestStack) -> No
 
     context = ToolContext(
         session=session,
-        gateway=FailingGateway(),  # type: ignore[arg-type]
+        gateway=cast(QQGateway, FailingGateway()),
         config=stack.config,
         memory=stack.memory,
         whitelist=stack.whitelist,

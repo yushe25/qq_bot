@@ -136,7 +136,12 @@ class SafetyPipeline:
                         continue
                     sent_count += 1
                     try:
-                        await gateway.send_group_message(scene_id, text, item.get("reply_to_message_id"))
+                        reply_to = item.get("reply_to_message_id")
+                        await gateway.send_group_message(
+                            scene_id,
+                            text,
+                            str(reply_to) if reply_to is not None else None,
+                        )
                     except Exception as exc:  # noqa: BLE001 - gateway boundary; audit every send failure
                         await self.audit.record(
                             action="send_group_message",
@@ -173,7 +178,12 @@ class SafetyPipeline:
                         continue
                     sent_count += 1
                     try:
-                        await gateway.send_private_message(scene_id, text, item.get("reply_to_message_id"))
+                        reply_to = item.get("reply_to_message_id")
+                        await gateway.send_private_message(
+                            scene_id,
+                            text,
+                            str(reply_to) if reply_to is not None else None,
+                        )
                     except Exception as exc:  # noqa: BLE001 - gateway boundary; audit every send failure
                         await self.audit.record(
                             action="send_private_message",

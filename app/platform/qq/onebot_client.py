@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 import httpx
-import websockets
+from websockets.asyncio.client import ClientConnection, connect
 
 from app.config import QQConfig
 from app.platform.gateway import EventHandler
@@ -19,7 +19,7 @@ class OneBotV11Gateway:
     def __init__(self, config: QQConfig) -> None:
         self.config = config
         self._handler: EventHandler | None = None
-        self._ws: websockets.WebSocketClientProtocol | None = None
+        self._ws: ClientConnection | None = None
         self._http_url = config.http_url.rstrip("/")
         self._stopping = False
         self._reconnect_task: asyncio.Task[None] | None = None
@@ -65,7 +65,7 @@ class OneBotV11Gateway:
 
     async def _connect_once(self) -> None:
         headers = {"Authorization": f"Bearer {self.config.access_token}"} if self.config.access_token else {}
-        self._ws = await websockets.connect(self.config.ws_url, additional_headers=headers)
+        self._ws = await connect(self.config.ws_url, additional_headers=headers)
         logger.info("OneBot WS connected: %s", self.config.ws_url)
 
     async def _receive_loop(self) -> None:
@@ -82,7 +82,7 @@ class OneBotV11Gateway:
                 logger.debug("ignoring malformed OneBot event", exc_info=True)
                 continue
 
-    async def _post(self, action: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def _post(self, action: str, params: dict[str, Any]) -> Any:
         headers = {"content-type": "application/json"}
         if self.config.access_token:
             headers["authorization"] = f"Bearer {self.config.access_token}"
@@ -120,7 +120,7 @@ class OneBotV11Gateway:
                 {"type": "text", "data": {"text": text}},
             ]
             params.pop("auto_escape")
-        return await self._post("send_group_msg", params)
+        return _dict_result(await self._post("send_group_msg", params))
 
     async def send_private_message(self, user_id: str, text: str, reply_to_message_id: str | None = None) -> dict[str, object]:
         params: dict[str, Any] = {"user_id": int(user_id), "message": text, "auto_escape": True}
@@ -130,44 +130,57 @@ class OneBotV11Gateway:
                 {"type": "text", "data": {"text": text}},
             ]
             params.pop("auto_escape")
-        return await self._post("send_private_msg", params)
+        return _dict_result(await self._post("send_private_msg", params))
 
     async def send_group_sticker(self, group_id: str, file_path: str, reply_to_message_id: str | None = None) -> dict[str, object]:
         message: list[dict[str, Any]] = [{"type": "image", "data": {"file": str(file_path)}}]
         if reply_to_message_id:
             message.insert(0, {"type": "reply", "data": {"id": str(reply_to_message_id)}})
-        return await self._post("send_group_msg", {"group_id": int(group_id), "message": message})
+        return _dict_result(await self._post("send_group_msg", {"group_id": int(group_id), "message": message}))
 
     async def send_private_sticker(self, user_id: str, file_path: str, reply_to_message_id: str | None = None) -> dict[str, object]:
         message: list[dict[str, Any]] = [{"type": "image", "data": {"file": str(file_path)}}]
         if reply_to_message_id:
             message.insert(0, {"type": "reply", "data": {"id": str(reply_to_message_id)}})
-        return await self._post("send_private_msg", {"user_id": int(user_id), "message": message})
+        return _dict_result(await self._post("send_private_msg", {"user_id": int(user_id), "message": message}))
 
     async def get_message(self, message_id: str) -> dict[str, object]:
         try:
             message_id_int = int(message_id)
         except ValueError as exc:
             raise RuntimeError(f"invalid message_id: {message_id}") from exc
-        return await self._post("get_msg", {"message_id": message_id_int})
+        return _dict_result(await self._post("get_msg", {"message_id": message_id_int}))
 
     async def get_group_history(self, group_id: str, limit: int = 20, message_seq: int | None = None) -> list[dict[str, object]]:
         params: dict[str, Any] = {"group_id": int(group_id)}
         if message_seq is not None:
             params["message_seq"] = message_seq
         data = await self._post("get_group_msg_history", params)
-        messages = data.get("messages", data.get("data", []))
-        return list(messages)[-limit:]
+        if isinstance(data, dict):
+            data = data.get("messages", data.get("data", []))
+        return _dict_list(data)[-limit:]
 
     async def get_group_members(self, group_id: str) -> list[dict[str, object]]:
         data = await self._post("get_group_member_list", {"group_id": int(group_id)})
         if isinstance(data, list):
-            return list(data)
+            return _dict_list(data)
         if isinstance(data, dict):
             nested = data.get("data")
             if isinstance(nested, list):
-                return list(nested)
+                return _dict_list(nested)
             members = data.get("members")
             if isinstance(members, list):
-                return list(members)
+                return _dict_list(members)
         return []
+
+
+def _dict_result(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise RuntimeError("OneBot action returned non-object data")  # noqa: TRY004 - protocol shape error
+    return dict(value)
+
+
+def _dict_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]

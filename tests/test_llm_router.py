@@ -12,7 +12,7 @@ from app.agent.providers.router import (
     ProviderUnavailableError,
     build_llm_provider,
 )
-from app.config import LLMConfig
+from app.config import LLMConfig, LLMProviderConfig
 
 
 class _StaticProvider:
@@ -163,18 +163,18 @@ def test_build_llm_provider_builds_named_registry(monkeypatch: pytest.MonkeyPatc
         provider="deepseek",
         fallbacks=["zhipu"],
         providers={
-            "deepseek": {
-                "base_url": "https://api.deepseek.com/v1",
-                "api_key_env": "DEEPSEEK_API_KEY",
-                "model": "deepseek-chat",
-                "temperature": 0.25,
-                "max_tokens": 321,
-            },
-            "zhipu": {
-                "base_url": "https://open.bigmodel.cn/api/paas/v4",
-                "api_key_env": "ZHIPU_API_KEY",
-                "model": "glm-4-flash",
-            },
+            "deepseek": LLMProviderConfig(
+                base_url="https://api.deepseek.com/v1",
+                api_key_env="DEEPSEEK_API_KEY",
+                model="deepseek-chat",
+                temperature=0.25,
+                max_tokens=321,
+            ),
+            "zhipu": LLMProviderConfig(
+                base_url="https://open.bigmodel.cn/api/paas/v4",
+                api_key_env="ZHIPU_API_KEY",
+                model="glm-4-flash",
+            ),
         },
     )
 
@@ -195,11 +195,11 @@ def test_llm_config_normalizes_primary_provider_id() -> None:
     config = LLMConfig(
         provider=" DeepSeek ",
         providers={
-            "deepseek": {
-                "base_url": "https://api.deepseek.com/v1",
-                "api_key_env": "DEEPSEEK_API_KEY",
-                "model": "deepseek-chat",
-            }
+            "deepseek": LLMProviderConfig(
+                base_url="https://api.deepseek.com/v1",
+                api_key_env="DEEPSEEK_API_KEY",
+                model="deepseek-chat",
+            )
         },
     )
 
@@ -211,11 +211,11 @@ def test_build_llm_provider_rejects_missing_selected_key(monkeypatch: pytest.Mon
     config = LLMConfig(
         provider="deepseek",
         providers={
-            "deepseek": {
-                "base_url": "https://api.deepseek.com/v1",
-                "api_key_env": "DEEPSEEK_API_KEY",
-                "model": "deepseek-chat",
-            }
+            "deepseek": LLMProviderConfig(
+                base_url="https://api.deepseek.com/v1",
+                api_key_env="DEEPSEEK_API_KEY",
+                model="deepseek-chat",
+            )
         },
     )
 

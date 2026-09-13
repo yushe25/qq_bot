@@ -180,8 +180,9 @@ def build_http_app(mock: MockOneBot) -> FastAPI:
 
     @app.post("/get_msg")
     async def get_msg(body: dict[str, Any]) -> dict[str, Any]:
+        raw_message_id = body.get("message_id")
         try:
-            message_id = int(body.get("message_id"))
+            message_id = int(str(raw_message_id)) if raw_message_id is not None else -1
         except (TypeError, ValueError):
             message_id = -1
         data = mock.messages.get(message_id, {})
@@ -223,7 +224,7 @@ def build_http_app(mock: MockOneBot) -> FastAPI:
             {"user_id": 10003, "nickname": "老胡", "card": "老胡", "role": "member"},
         ]
         mock.record("get_group_member_list", body, {"members": len(data)})
-        return mock.ok(data)
+        return mock.ok({"members": data})
 
     @app.get("/health")
     async def health() -> dict[str, Any]:

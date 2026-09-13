@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -29,16 +30,24 @@ def test_tool_schemas_can_be_omitted_for_final_reply_and_keep_order() -> None:
     first = build_tool_schemas()
     second = build_tool_schemas()
 
-    assert [item["function"]["name"] for item in first] == [item["function"]["name"] for item in second]
+    assert [_schema_function(item)["name"] for item in first] == [_schema_function(item)["name"] for item in second]
     assert build_tool_schemas(allow_tools=False) == []
 
 
 def test_group_history_defaults_to_ten() -> None:
     assert GetHistoryArgs().limit == 10
-    history_schema = next(
-        item for item in build_tool_schemas() if item["function"]["name"] == "qq_get_group_history"
-    )
-    assert history_schema["function"]["parameters"]["properties"]["limit"]["default"] == 10
+    history_schema = next(item for item in build_tool_schemas() if _schema_function(item)["name"] == "qq_get_group_history")
+    function = _schema_function(history_schema)
+    parameters = cast(dict[str, Any], function["parameters"])
+    properties = cast(dict[str, Any], parameters["properties"])
+    limit = cast(dict[str, Any], properties["limit"])
+    assert limit["default"] == 10
+
+
+def _schema_function(schema: dict[str, object]) -> dict[str, Any]:
+    function = schema.get("function")
+    assert isinstance(function, dict)
+    return function
 
 
 def test_token_budget_rejects_non_positive_limits() -> None:

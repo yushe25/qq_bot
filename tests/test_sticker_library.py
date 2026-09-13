@@ -96,7 +96,8 @@ def test_sticker_library_rejects_path_traversal(tmp_path: Path) -> None:
     )
 
     assert library.available is False
-    assert "路径" in library.error or library.error is not None
+    assert library.error is not None
+    assert "路径" in library.error
     assert library.resolve("evil") is None
 
 

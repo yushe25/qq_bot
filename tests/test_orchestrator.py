@@ -453,8 +453,8 @@ async def test_wake_sends_sticker_only_when_no_text_and_profile_allows(
     stack.orchestrator.schedule_profile = ScheduleProfile(
         timezone="Asia/Shanghai",
         active_windows=((0, 24),),
-        reply_delay=(0, 0),
-        mention_delay=(0, 0),
+        reply_delay=DelayRange(0, 0),
+        mention_delay=DelayRange(0, 0),
         sticker_only_probability=1,
         sticker_with_text_probability=0,
     )

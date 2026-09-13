@@ -84,7 +84,7 @@ def window_phase(profile: ScheduleProfile, when: datetime) -> str:
 
 
 def now_local(profile: ScheduleProfile) -> datetime:
-    return datetime.now(_timezone(profile))
+    return datetime.now(_timezone(profile.timezone))
 
 
 def response_delay_seconds(profile: ScheduleProfile, category: TriggerCategory, is_owner: bool = False) -> float:

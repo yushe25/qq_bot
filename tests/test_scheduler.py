@@ -181,7 +181,7 @@ async def test_quiet_window_allows_owner_with_mention_delay(stack: TestStack, mo
         timezone="Asia/Shanghai",
         active_windows=((9, 12), (19, 24)),
         quiet_window=(1, 8),
-        reply_delay=(0, 0),
+        reply_delay=DelayRange(0, 0),
         mention_delay=DelayRange(5, 5),
         sticker_only_probability=0,
         sticker_with_text_probability=0,

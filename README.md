@@ -11,8 +11,7 @@ Python 3.12+ 实现，无 Node 依赖。
 首次使用先创建虚拟环境并安装依赖：
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+uv sync --locked --extra dev
 ```
 
 常用命令：
@@ -238,7 +237,7 @@ python scripts/onebot_check.py
 | `scheduler.names` | 能被昵称唤起的名字列表 | `[]` |
 | `scheduler.keywords` | 关键词唤醒列表 | `[]` |
 | `scheduler.maxWakesPerMinute` | 每分钟唤醒批次上限 | `4` |
-| `scheduler.maxWakesPerHour` | 每小时唤醒批次上限 | `20` |
+| `scheduler.maxWakesPerHour` | 全局及每会话每小时唤醒批次上限 | `20` |
 | `scheduler.cooldownSeconds` | 发言后的会话冷却时间（秒） | `90` |
 | `tokenBudget.wakeMessages` | 单次唤醒注入的最近事件数 | `12` |
 | `tokenBudget.historyMessages` | 持久化和发送给模型的会话消息上限 | `28` |
@@ -254,7 +253,7 @@ python scripts/onebot_check.py
 | `safety.allowGroups` | 允许的群号列表 | `[]` |
 | `safety.maxGroupMembers` | 群成员数上限；超限时只读不发言 | `20` |
 | `safety.maxSendsPerMinute` | 每分钟发送上限 | `4` |
-| `safety.maxSendsPerHour` | 每小时发送上限 | `60` |
+| `safety.maxSendsPerHour` | 全局及每会话每小时发送上限 | `60` |
 | `safety.maxSendsPerWake` | 单次唤醒最多发送条数 | `3` |
 | `safety.maxSendsPerDay` | 每会话每日发送上限，熔断后需控制台恢复 | `200` |
 | `safety.maxMessageChars` | 单条出站文本最大字符数 | `200` |

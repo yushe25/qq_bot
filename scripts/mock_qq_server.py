@@ -12,14 +12,21 @@ import argparse
 import asyncio
 import json
 import logging
+import random
+import sys
 import time
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 import websockets
 from fastapi import FastAPI, Request
 from websockets.exceptions import ConnectionClosed
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.logging_setup import configure_logging
 
@@ -28,13 +35,32 @@ logger = logging.getLogger("qqf.mock")
 
 
 class MockOneBot:
-    def __init__(self, group_id: str, bot_id: str) -> None:
+    def __init__(
+        self,
+        group_id: str,
+        bot_id: str,
+        *,
+        stage6: bool = False,
+        seed: int = 0,
+        scenario_interval: float = 10.0,
+        periodic_interval: float = 22.0,
+        report_path: str | Path | None = None,
+    ) -> None:
         self.group_id = group_id
         self.bot_id = bot_id
         self.connections: set[websockets.ServerConnection] = set()
-        self.actions: deque[dict[str, Any]] = deque(maxlen=200)
+        self.actions: deque[dict[str, Any]] = deque(maxlen=10_000 if stage6 else 200)
         self.messages: dict[int, dict[str, Any]] = {}
         self._action_seq = 1000
+        self.stage6 = stage6
+        self.seed = seed
+        self.scenario_interval = max(1.0, scenario_interval)
+        self.periodic_interval = max(5.0, periodic_interval)
+        self.report_path = Path(report_path).resolve() if report_path else None
+        self.started_at = time.time()
+        self.connection_count = 0
+        self.event_counts: dict[str, int] = {}
+        self._stage6_seq = 2000
 
     def record(self, action: str, params: dict[str, Any], result: dict[str, Any]) -> None:
         self._action_seq += 1
@@ -66,7 +92,131 @@ class MockOneBot:
         self.messages[int(message_id)] = payload
         return payload
 
+    def private_payload(self, message_id: int, user_id: str, name: str, text: str) -> dict[str, Any]:
+        payload = {
+            "post_type": "message",
+            "message_type": "private",
+            "time": int(time.time()),
+            "self_id": int(self.bot_id),
+            "message_id": message_id,
+            "user_id": int(user_id),
+            "sender": {"user_id": int(user_id), "nickname": name},
+            "raw_message": text,
+            "message": [{"type": "text", "data": {"text": text}}],
+        }
+        self.messages[int(message_id)] = payload
+        return payload
+
+    def stage6_payloads(self) -> list[tuple[str, dict[str, Any], float]]:
+        self._stage6_seq = 2000
+
+        def text(text_value: str, member_id: str, name: str) -> dict[str, Any]:
+            self._stage6_seq += 1
+            return self.message_payload(
+                self._stage6_seq,
+                member_id,
+                name,
+                [{"type": "text", "data": {"text": text_value}}],
+                text_value,
+            )
+
+        def mention(text_value: str, member_id: str, name: str) -> dict[str, Any]:
+            self._stage6_seq += 1
+            return self.message_payload(
+                self._stage6_seq,
+                member_id,
+                name,
+                [
+                    {"type": "at", "data": {"qq": self.bot_id, "name": "小皮"}},
+                    {"type": "text", "data": {"text": f" {text_value}"}},
+                ],
+                text_value,
+            )
+
+        def poke_payload() -> dict[str, Any]:
+            self._stage6_seq += 1
+            return {
+                "post_type": "notice",
+                "notice_type": "notify",
+                "sub_type": "poke",
+                "time": int(time.time()),
+                "self_id": int(self.bot_id),
+                "message_id": self._stage6_seq,
+                "group_id": int(self.group_id),
+                "user_id": 10003,
+                "target_id": int(self.bot_id),
+            }
+
+        interval = self.scenario_interval
+        return [
+            ("M01_NORMAL", text("S6_NORMAL 今天有点困", "10001", "阿泽"), interval * 1),
+            ("M02_MENTION", mention("S6_MEMORY 在吗", "10002", "小满"), interval * 2),
+            ("M03_POKE", poke_payload(), interval * 3),
+            ("M06_STICKER", text("S6_STICKER 发个表情", "10003", "老胡"), interval * 4),
+            ("M09_MULTI_TOOL", text("S6_MULTI 看一下成员和历史", "10001", "阿泽"), interval * 5),
+            ("M05_PRIVATE", self.private_payload(7001, "10001", "阿泽", "S6_PRIVATE 在吗"), interval * 6),
+            ("M04_DIVE", text("S6_DIVE 先潜水", "10002", "小满"), interval * 7),
+            ("M07_LIMIT_1", mention("S6_MEMORY 限流一", "10003", "老胡"), interval * 8),
+            ("M07_LIMIT_2", mention("S6_MEMORY 限流二", "10001", "阿泽"), interval * 9),
+            ("M08_DEFER", mention("S6_MEMORY 延后重试", "10002", "小满"), interval * 10),
+        ]
+
+    def record_stage6_event(self, scenario: str, payload: dict[str, Any]) -> None:
+        self.event_counts[scenario] = self.event_counts.get(scenario, 0) + 1
+        logger.info("stage6 event %s %s", scenario, payload.get("message_id"))
+
+    def write_report(self) -> None:
+        if self.report_path is None:
+            return
+        report = {
+            "started_at": self.started_at,
+            "finished_at": time.time(),
+            "duration_seconds": max(0.0, time.time() - self.started_at),
+            "seed": self.seed,
+            "connection_count": self.connection_count,
+            "event_counts": dict(sorted(self.event_counts.items())),
+            "action_count": len(self.actions),
+            "actions": [dict(item) for item in self.actions],
+        }
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.report_path.with_suffix(self.report_path.suffix + ".tmp")
+        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.replace(self.report_path)
+
+    async def push_stage6_events(self, websocket: websockets.ServerConnection) -> None:
+        randomizer = random.Random(self.seed)
+        try:
+            for scenario, payload, delay in self.stage6_payloads():
+                await asyncio.sleep(delay)
+                await websocket.send(json.dumps(payload, ensure_ascii=False))
+                self.record_stage6_event(scenario, payload)
+
+            members = [
+                ("10001", "阿泽"),
+                ("10002", "小满"),
+                ("10003", "老胡"),
+            ]
+            periodic_index = 0
+            while True:
+                await asyncio.sleep(self.periodic_interval)
+                member_id, name = randomizer.choice(members)
+                periodic_index += 1
+                payload = self.message_payload(
+                    8000 + periodic_index,
+                    member_id,
+                    name,
+                    [{"type": "text", "data": {"text": f"S6_PERIODIC 普通消息 {periodic_index}"}}],
+                    f"S6_PERIODIC 普通消息 {periodic_index}",
+                )
+                await websocket.send(json.dumps(payload, ensure_ascii=False))
+                self.record_stage6_event("M10_PERIODIC", payload)
+        except ConnectionClosed:
+            return
+
     async def push_scripted_events(self, websocket: websockets.ServerConnection) -> None:
+        if self.stage6:
+            await self.push_stage6_events(websocket)
+            return
         members = [
             ("10001", "阿泽"),
             ("10002", "小满"),
@@ -130,6 +280,7 @@ class MockOneBot:
 
     async def ws_handler(self, websocket: websockets.ServerConnection) -> None:
         self.connections.add(websocket)
+        self.connection_count += 1
         logger.info("mock WS client connected: %s", websocket.remote_address)
         try:
             await self.push_scripted_events(websocket)
@@ -267,16 +418,33 @@ async def run_servers(
     host: str,
     http_port: int,
     ws_port: int,
+    stop_file: str | Path | None = None,
 ) -> None:
     app = build_http_app(mock)
     http_server = uvicorn.Server(uvicorn.Config(app, host=host, port=http_port, log_level="info"))
     ws_server = await websockets.serve(mock.ws_handler, host, ws_port)
     logger.info("mock OneBot HTTP=%s:%s WS=%s:%s group=%s bot=%s", host, http_port, host, ws_port, mock.group_id, mock.bot_id)
+    stop_path = Path(stop_file).resolve() if stop_file else None
+    stop_task: asyncio.Task[None] | None = None
+    if stop_path is not None:
+        async def wait_for_stop() -> None:
+            while not stop_path.exists():
+                await asyncio.sleep(0.25)
+            http_server.should_exit = True
+
+        stop_task = asyncio.create_task(wait_for_stop())
     try:
         await http_server.serve()
     finally:
+        if stop_task is not None:
+            stop_task.cancel()
+            try:
+                await stop_task
+            except asyncio.CancelledError:
+                pass
         ws_server.close()
         await ws_server.wait_closed()
+        mock.write_report()
 
 
 def main() -> None:
@@ -286,10 +454,25 @@ def main() -> None:
     parser.add_argument("--ws-port", type=int, default=3001)
     parser.add_argument("--group", default="100000")
     parser.add_argument("--bot-id", default="31415926")
+    parser.add_argument("--stage6", action="store_true", help="send the deterministic Stage 6 event matrix")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--scenario-interval", type=float, default=10.0)
+    parser.add_argument("--periodic-interval", type=float, default=22.0)
+    parser.add_argument("--duration-seconds", type=float, default=0.0, help="accepted for driver compatibility")
+    parser.add_argument("--stop-file")
+    parser.add_argument("--report")
     args = parser.parse_args()
 
-    mock = MockOneBot(args.group, args.bot_id)
-    asyncio.run(run_servers(mock, args.host, args.http_port, args.ws_port))
+    mock = MockOneBot(
+        args.group,
+        args.bot_id,
+        stage6=args.stage6,
+        seed=args.seed,
+        scenario_interval=args.scenario_interval,
+        periodic_interval=args.periodic_interval,
+        report_path=args.report,
+    )
+    asyncio.run(run_servers(mock, args.host, args.http_port, args.ws_port, stop_file=args.stop_file))
 
 
 if __name__ == "__main__":

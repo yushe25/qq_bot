@@ -19,6 +19,7 @@ def test_token_budget_defaults_are_conservative() -> None:
     assert config.scheduler.batch_window_ms == 8000
     assert config.scheduler.wake_probability <= 0.04
     assert config.scheduler.cooldown_seconds >= 90
+    assert config.sticker.enabled is False
     assert 10 <= config.token_budget.wake_messages <= 12
     assert 24 <= config.token_budget.history_messages <= 30
     assert config.token_budget.event_text_chars <= 160
@@ -32,6 +33,12 @@ def test_tool_schemas_can_be_omitted_for_final_reply_and_keep_order() -> None:
 
     assert [_schema_function(item)["name"] for item in first] == [_schema_function(item)["name"] for item in second]
     assert build_tool_schemas(allow_tools=False) == []
+    assert "sticker_send" not in [_schema_function(item)["name"] for item in first]
+    sticker_names = [
+        _schema_function(item)["name"]
+        for item in build_tool_schemas(sticker_enabled=True)
+    ]
+    assert "sticker_send" in sticker_names
 
 
 def test_group_history_defaults_to_ten() -> None:

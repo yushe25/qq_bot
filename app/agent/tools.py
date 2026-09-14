@@ -179,6 +179,8 @@ async def _dispatch(ctx: ToolContext, call: ToolCall) -> ToolResult:
         library = ctx.sticker_library
         if library is None:
             return ToolResult(success=False, message="表情库未配置")
+        if not library.available:
+            return ToolResult(success=False, message="表情功能未启用")
         sticker = library.resolve(args.sticker_id)
         if sticker is None:
             return ToolResult(success=False, message=f"表情未在白名单中或不可用: {args.sticker_id}")

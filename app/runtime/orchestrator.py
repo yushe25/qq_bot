@@ -130,7 +130,12 @@ class Orchestrator:
                             wake_category=wake_input.category,
                         ),
                         messages=trim_conversation(conversation, history_limit),
-                        tools=build_tool_schemas(allow_tools=not final_step),
+                        tools=build_tool_schemas(
+                            allow_tools=not final_step,
+                            sticker_enabled=(
+                                self.sticker_library is not None and self.sticker_library.available
+                            ),
+                        ),
                         temperature=provider_temperature,
                         max_tokens=provider_max_tokens,
                     )

@@ -188,6 +188,7 @@ python scripts/onebot_check.py
 
 ## 表情与入站媒体
 
+- 表情总开关 `sticker.enabled` 默认关闭；关闭时模型看不到 `sticker_send`，自动追加逻辑也不会发送表情。
 - 表情库使用本地目录 + `manifest.yaml` 白名单：只发送 `approved: true` 且通过 MediaGuard 校验的本地文件。
 - 模型可调用 `sticker_send`，发送计入限流、每日上限、成员数护栏与审计；发送后 `usage_count` 递增。
 - 入站图片、QQ 表情、语音、文件、转发卡片在归一化阶段摘要为 `[图片]`、`[表情:178:抠鼻]`、`[语音]`、`[文件:文件名]`、`[分享卡片]`，不携带原始文件内容。
@@ -260,6 +261,7 @@ python scripts/onebot_check.py
 | `console.host` / `console.port` | 控制台监听地址 | `127.0.0.1:3100` |
 | `console.token` | 控制台访问 Token；为空时只放行回环地址来源 | 空 |
 | `storage.databasePath` | SQLite 状态库路径 | `state/qqf.db` |
+| `sticker.enabled` | 表情发送总开关；默认关闭 | `false` |
 | `personaPath` | 人格 YAML 路径 | `personas/default.yaml` |
 
 环境变量会被 JSON 配置覆盖逻辑合并：`QQF_LLM_API_KEY`、`QQF_ONEBOT_TOKEN`、`QQF_CONSOLE_TOKEN`、`QQF_DATA_DIR`。命名 Provider 的 Key 由各自的 `apiKeyEnv` 指定，例如 `DEEPSEEK_API_KEY`；JSON 中的明文 `apiKey` 会被拒绝。`QQF_DATA_DIR` 会改变状态库目录。程序启动时会在状态目录创建 `qqf.lock`，重复启动会直接退出，避免两个实例同时写同一个 SQLite 库。

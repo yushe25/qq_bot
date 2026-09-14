@@ -99,7 +99,11 @@ def build_runtime(config: AppConfig) -> AppRuntime:
     else:
         gateway = NullGateway()
 
-    sticker_library = StickerLibrary(config.sticker_dir, store=store)
+    sticker_library = StickerLibrary(
+        config.sticker_dir,
+        enabled=config.sticker.enabled,
+        store=store,
+    )
     safety = SafetyPipeline(
         config.safety,
         whitelist,

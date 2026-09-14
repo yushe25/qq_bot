@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 
-def build_tool_schemas(*, allow_tools: bool = True) -> list[dict[str, object]]:
+def build_tool_schemas(
+    *,
+    allow_tools: bool = True,
+    sticker_enabled: bool = False,
+) -> list[dict[str, object]]:
     if not allow_tools:
         return []
-    return [
+    schemas: list[dict[str, object]] = [
         {
             "type": "function",
             "function": {
@@ -109,16 +113,20 @@ def build_tool_schemas(*, allow_tools: bool = True) -> list[dict[str, object]]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "sticker_send",
-                "description": "从白名单表情库发送表情包。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"stickerId": {"type": "string"}},
-                    "required": ["stickerId"],
-                },
-            },
-        },
     ]
+    if sticker_enabled:
+        schemas.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": "sticker_send",
+                    "description": "从白名单表情库发送表情包。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"stickerId": {"type": "string"}},
+                        "required": ["stickerId"],
+                    },
+                },
+            }
+        )
+    return schemas

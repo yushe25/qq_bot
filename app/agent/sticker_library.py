@@ -24,10 +24,12 @@ class StickerLibrary:
     def __init__(
         self,
         library_dir: str | Path,
+        enabled: bool = False,
         media_guard: MediaGuard | None = None,
         store: StateStore | None = None,
     ) -> None:
         self.library_dir = Path(library_dir).resolve()
+        self.enabled = enabled
         self.media_guard = media_guard or MediaGuard(
             max_bytes=8 * 1024 * 1024,
             max_pixels=40_960_000,
@@ -75,13 +77,13 @@ class StickerLibrary:
 
     @property
     def available(self) -> bool:
-        return self.error is None and bool(self._entries)
+        return self.enabled and self.error is None and bool(self._entries)
 
     def list_ids(self) -> list[str]:
-        return list(self._entries)
+        return list(self._entries) if self.available else []
 
     def resolve(self, sticker_id: str) -> StickerFile | None:
-        if self.error or sticker_id not in self._entries:
+        if not self.enabled or self.error or sticker_id not in self._entries:
             return None
         entry = self._entries[sticker_id]
         if entry.get("approved") is not True:

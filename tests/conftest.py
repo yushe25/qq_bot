@@ -101,6 +101,7 @@ async def stack(tmp_path) -> AsyncIterator[TestStack]:
     )
     sticker_library = StickerLibrary(
         sticker_dir,
+        enabled=True,
         media_guard=MediaGuard(max_bytes=1024, max_pixels=10_000),
         store=store,
     )

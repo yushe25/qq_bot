@@ -173,6 +173,10 @@ class LearningConfig(BaseModel):
     exclude_members: list[str] = Field(default_factory=list)
 
 
+class StickerConfig(BaseModel):
+    enabled: bool = False
+
+
 class AppConfig(BaseModel):
     qq: QQConfig = Field(default_factory=QQConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -182,6 +186,7 @@ class AppConfig(BaseModel):
     learning: LearningConfig = Field(default_factory=LearningConfig)
     console: ConsoleConfig = Field(default_factory=ConsoleConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    sticker: StickerConfig = Field(default_factory=StickerConfig)
     persona_path: str = "personas/default.yaml"
     sticker_dir: str = "stickers"
 

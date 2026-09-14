@@ -102,5 +102,8 @@
     "databasePath": "state/qqf.db"
   },
   "personaPath": "personas/default.yaml",
-  "stickerDir": "stickers"
+  "stickerDir": "stickers",
+  "sticker": {
+    "enabled": false
+  }
 }

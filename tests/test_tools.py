@@ -253,6 +253,28 @@ async def test_sticker_send_fails_when_library_missing(stack: TestStack) -> None
     assert "表情库未配置" in result.message
 
 
+async def test_sticker_send_fails_when_feature_disabled(stack: TestStack) -> None:
+    stack.sticker_library.enabled = False
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+        sticker_library=stack.sticker_library,
+    )
+
+    result = await execute_tool(
+        context,
+        ToolCall(name="sticker_send", arguments={"stickerId": "mock-01"}),
+    )
+
+    assert result.success is False
+    assert "未启用" in result.message
+    assert context.outbox == []
+
+
 async def test_qq_dive_is_rejected_for_mention_before_reply(stack: TestStack) -> None:
     session = stack.sessions.ensure_session("group", "100000")
     context = ToolContext(

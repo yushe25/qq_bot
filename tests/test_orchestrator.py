@@ -473,3 +473,28 @@ async def test_wake_sends_sticker_only_when_no_text_and_profile_allows(
     assert len(stack.gateway.sent) == 1
     assert "sticker" in str(stack.gateway.sent[0])
     assert session.state == SessionState.COOLDOWN
+
+
+async def test_wake_does_not_attach_sticker_when_disabled(stack: TestStack, monkeypatch) -> None:
+    stack.sticker_library.enabled = False
+    stack.orchestrator.schedule_profile = ScheduleProfile(
+        timezone="Asia/Shanghai",
+        active_windows=((0, 24),),
+        reply_delay=DelayRange(0, 0),
+        mention_delay=DelayRange(0, 0),
+        sticker_only_probability=1,
+        sticker_with_text_probability=1,
+    )
+    monkeypatch.setattr("app.runtime.orchestrator.random.random", lambda: 0.0)
+    session = stack.sessions.ensure_session("group", "100000")
+    wake = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_mention_event(session.id),),
+    )
+
+    outcome = await stack.orchestrator.run_wake(session, wake)
+
+    assert outcome.sent > 0
+    assert not any("sticker" in str(item) for item in stack.gateway.sent)

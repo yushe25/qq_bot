@@ -35,7 +35,32 @@ def init_library(root: Path, store: StateStore | None = None):
     from app.agent.sticker_library import StickerLibrary
 
     guard = MediaGuard(max_bytes=1024, max_pixels=10_000)
-    return StickerLibrary(root, media_guard=guard, store=store)
+    return StickerLibrary(root, enabled=True, media_guard=guard, store=store)
+
+
+def test_sticker_library_disabled_fails_closed(tmp_path: Path) -> None:
+    root = tmp_path / "stickers"
+    _write_manifest(
+        root / "manifest.yaml",
+        [
+            {
+                "id": "mock-01",
+                "name": "无语猫",
+                "file": "images/mock-01.gif",
+                "tags": [],
+                "approved": True,
+                "usage_count": 0,
+            }
+        ],
+    )
+    _write_gif(root / "images" / "mock-01.gif")
+    from app.agent.sticker_library import StickerLibrary
+
+    library = StickerLibrary(root, enabled=False)
+
+    assert library.available is False
+    assert library.list_ids() == []
+    assert library.resolve("mock-01") is None
 
 
 def test_sticker_library_resolves_approved_entry(tmp_path: Path) -> None:

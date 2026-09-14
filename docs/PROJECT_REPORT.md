@@ -143,6 +143,18 @@ console              FastAPI API + WS 实时流 + 单页控制台
     和数量上限清理。修复后 30 分钟复验见
     `docs/acceptance/T-04A-stage6-post-fix-20260913.md`。
 
+### T-04B 真实协议验收发现（2026-09-13）
+
+21. **NapCat WS 错误 Token 未被拒绝**：真实环境中正确 Token 可连接，
+    `Bearer invalid-token` 同样可连接。该问题使真实 WS 事件鉴权失效，需检查
+    NapCat Token 配置或明确接受仅绑定回环的安全边界。
+22. **QQF 缺少正式出站 @ 接口**：当前 `OneBotV11Gateway` 只有文本和 reply，
+    没有真实 `at` segment 产品接口，P08 无法通过产品路径验收。
+
+真实账号当前返回 `online=false`，P04 至 P11、P14、P15 均未执行；T-04B
+未通过，T-04 保持打开。详见
+`docs/acceptance/T-04B-real-protocol-20260913.md`。
+
 ## 五、优化方向
 
 ### 当前阶段：Stage 6 mock 终验已通过，等待 T-04B

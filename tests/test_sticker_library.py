@@ -31,11 +31,23 @@ def _library(tmp_path: Path, entries: list[dict[str, object]], store: StateStore
     return init_library(root, store)
 
 
-def init_library(root: Path, store: StateStore | None = None):
+def init_library(
+    root: Path,
+    store: StateStore | None = None,
+    *,
+    enabled: bool = True,
+    allowed_ids: tuple[str, ...] = ("mock-01",),
+):
     from app.agent.sticker_library import StickerLibrary
 
     guard = MediaGuard(max_bytes=1024, max_pixels=10_000)
-    return StickerLibrary(root, enabled=True, media_guard=guard, store=store)
+    return StickerLibrary(
+        root,
+        enabled=enabled,
+        allowed_ids=allowed_ids,
+        media_guard=guard,
+        store=store,
+    )
 
 
 def test_sticker_library_disabled_fails_closed(tmp_path: Path) -> None:
@@ -56,11 +68,66 @@ def test_sticker_library_disabled_fails_closed(tmp_path: Path) -> None:
     _write_gif(root / "images" / "mock-01.gif")
     from app.agent.sticker_library import StickerLibrary
 
-    library = StickerLibrary(root, enabled=False)
+    library = StickerLibrary(root, enabled=False, allowed_ids=["mock-01"])
 
     assert library.available is False
     assert library.list_ids() == []
     assert library.resolve("mock-01") is None
+
+
+def test_sticker_library_only_lists_and_resolves_allowed_ids(tmp_path: Path) -> None:
+    root = tmp_path / "stickers"
+    entries = [
+        {
+            "id": "pilot-01",
+            "name": "试点",
+            "file": "images/pilot-01.gif",
+            "tags": [],
+            "approved": True,
+            "usage_count": 0,
+        },
+        {
+            "id": "normal-01",
+            "name": "普通",
+            "file": "images/normal-01.gif",
+            "tags": [],
+            "approved": True,
+            "usage_count": 0,
+        },
+    ]
+    _write_manifest(root / "manifest.yaml", entries)
+    _write_gif(root / "images" / "pilot-01.gif")
+    _write_gif(root / "images" / "normal-01.gif")
+
+    library = init_library(root, allowed_ids=("pilot-01",))
+
+    assert library.available is True
+    assert library.list_ids() == ["pilot-01"]
+    assert library.resolve("pilot-01") is not None
+    assert library.resolve("normal-01") is None
+
+
+def test_sticker_library_enabled_requires_allowlist(tmp_path: Path) -> None:
+    root = tmp_path / "stickers"
+    _write_manifest(
+        root / "manifest.yaml",
+        [
+            {
+                "id": "mock-01",
+                "name": "无语猫",
+                "file": "images/mock-01.gif",
+                "tags": [],
+                "approved": True,
+                "usage_count": 0,
+            }
+        ],
+    )
+    _write_gif(root / "images" / "mock-01.gif")
+
+    library = init_library(root, allowed_ids=())
+
+    assert library.available is False
+    assert library.list_ids() == []
 
 
 def test_sticker_library_resolves_approved_entry(tmp_path: Path) -> None:

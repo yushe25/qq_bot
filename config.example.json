@@ -104,6 +104,7 @@
   "personaPath": "personas/default.yaml",
   "stickerDir": "stickers",
   "sticker": {
-    "enabled": false
+    "enabled": false,
+    "allowedIds": ["pilot-01"]
   }
 }

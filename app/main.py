@@ -102,6 +102,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
     sticker_library = StickerLibrary(
         config.sticker_dir,
         enabled=config.sticker.enabled,
+        allowed_ids=config.sticker.allowed_ids,
         store=store,
     )
     safety = SafetyPipeline(

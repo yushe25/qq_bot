@@ -64,6 +64,18 @@ def test_token_budget_rejects_non_positive_limits() -> None:
         AppConfig.model_validate({"token_budget": {"history_messages": 0}})
 
 
+def test_sticker_enabled_requires_explicit_allowlist() -> None:
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate({"sticker": {"enabled": True}})
+
+    config = AppConfig.model_validate(
+        {"sticker": {"enabled": True, "allowed_ids": ["pilot-01"]}}
+    )
+
+    assert config.sticker.enabled is True
+    assert config.sticker.allowed_ids == ["pilot-01"]
+
+
 async def test_existing_wake_log_is_migrated_for_token_usage(tmp_path) -> None:
     database_path = tmp_path / "old-qqf.db"
     conn = sqlite3.connect(database_path)

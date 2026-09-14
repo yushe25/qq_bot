@@ -175,6 +175,13 @@ class LearningConfig(BaseModel):
 
 class StickerConfig(BaseModel):
     enabled: bool = False
+    allowed_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_allowed_ids(self) -> StickerConfig:
+        if self.enabled and not self.allowed_ids:
+            raise ValueError("sticker.enabled=true requires sticker.allowedIds")
+        return self
 
 
 class AppConfig(BaseModel):

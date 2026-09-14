@@ -21,6 +21,7 @@
 
 - 入站：所有包含非文本 segment 的消息，在归一化阶段生成媒体摘要。
 - 出站总开关：`sticker.enabled` 默认 `false`；关闭时不暴露工具、不自动追加，显式伪造调用也返回失败。
+- 素材白名单：`sticker.allowedIds` 为空时功能失败关闭；开启时只允许清单内明确列出的 id。
 - 出站：模型调用 `sticker_send`，或按 persona 概率在文本回复后追加表情包。
 - 每会话每日表情发送数计入发送频率和每日上限。
 
@@ -73,6 +74,7 @@ manifest 条目：
 ## 安全边界
 
 - `sticker.enabled=false` 时所有表情发送失败关闭，不依赖删除数据库或素材文件。
+- `sticker.enabled=true` 时必须提供非空 `sticker.allowedIds`，白名单外素材全部拒绝。
 - `sticker_send` 只接受 manifest 中的 id，其余请求返回失败。
 - 出站图片必须经过 SafetyPipeline：白名单、频率限制、内容过滤、审计。
 - 禁止通过 sticker 发送 CQ 码、构造路径或绕过文本过滤。

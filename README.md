@@ -262,6 +262,7 @@ python scripts/onebot_check.py
 | `console.token` | 控制台访问 Token；为空时只放行回环地址来源 | 空 |
 | `storage.databasePath` | SQLite 状态库路径 | `state/qqf.db` |
 | `sticker.enabled` | 表情发送总开关；默认关闭 | `false` |
+| `sticker.allowedIds` | 灰度期间允许发送的素材 ID；开启时必须非空 | `[]` |
 | `personaPath` | 人格 YAML 路径 | `personas/default.yaml` |
 
 环境变量会被 JSON 配置覆盖逻辑合并：`QQF_LLM_API_KEY`、`QQF_ONEBOT_TOKEN`、`QQF_CONSOLE_TOKEN`、`QQF_DATA_DIR`。命名 Provider 的 Key 由各自的 `apiKeyEnv` 指定，例如 `DEEPSEEK_API_KEY`；JSON 中的明文 `apiKey` 会被拒绝。`QQF_DATA_DIR` 会改变状态库目录。程序启动时会在状态目录创建 `qqf.lock`，重复启动会直接退出，避免两个实例同时写同一个 SQLite 库。

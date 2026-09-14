@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,11 +26,13 @@ class StickerLibrary:
         self,
         library_dir: str | Path,
         enabled: bool = False,
+        allowed_ids: Sequence[str] = (),
         media_guard: MediaGuard | None = None,
         store: StateStore | None = None,
     ) -> None:
         self.library_dir = Path(library_dir).resolve()
         self.enabled = enabled
+        self.allowed_ids = tuple(str(item).strip() for item in allowed_ids if str(item).strip())
         self.media_guard = media_guard or MediaGuard(
             max_bytes=8 * 1024 * 1024,
             max_pixels=40_960_000,
@@ -77,13 +80,27 @@ class StickerLibrary:
 
     @property
     def available(self) -> bool:
-        return self.enabled and self.error is None and bool(self._entries)
+        return (
+            self.enabled
+            and bool(self.allowed_ids)
+            and self.error is None
+            and bool(self._entries)
+        )
 
     def list_ids(self) -> list[str]:
-        return list(self._entries) if self.available else []
+        if not self.available:
+            return []
+        allowed = set(self.allowed_ids)
+        return [sticker_id for sticker_id in self._entries if sticker_id in allowed]
 
     def resolve(self, sticker_id: str) -> StickerFile | None:
-        if not self.enabled or self.error or sticker_id not in self._entries:
+        if (
+            not self.enabled
+            or not self.allowed_ids
+            or self.error
+            or sticker_id not in self._entries
+            or sticker_id not in set(self.allowed_ids)
+        ):
             return None
         entry = self._entries[sticker_id]
         if entry.get("approved") is not True:

@@ -56,7 +56,11 @@ def _unpack_le(raw: bytes) -> int | None:
 
 def _unpack_be(raw: bytes) -> int | None:
     try:
-        return struct.unpack(">I", raw)[0]
+        if len(raw) == 2:
+            return struct.unpack(">H", raw)[0]
+        if len(raw) == 4:
+            return struct.unpack(">I", raw)[0]
+        return None
     except struct.error:
         return None
 

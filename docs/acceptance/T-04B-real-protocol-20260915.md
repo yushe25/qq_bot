@@ -3,7 +3,7 @@
 - 日期：2026-09-15
 - NapCat：`NapCat.Onebot 4.18.19`
 - OneBot：`v11`
-- 结论：P01-P10、P12、P13、P16 通过；P02 错误 WS Token 为回环受控例外；P11、P14、P15 仍阻塞，T-04 保持打开。
+- 结论：P01-P16 全部通过或属于明确回环受控例外；在默认禁止远端 OneBot 的前提下，T-04 可以关闭。
 
 ## 协议矩阵
 
@@ -19,20 +19,21 @@
 | P08 | 出站 @ | 通过 | 产品 mentionUserIds 生成 at segment；真实群显示蓝色 @ |
 | P09 | 引用回复 | 通过 | reply + text segment 顺序正确 |
 | P10 | 表情媒体 | 通过 | 白名单本地图片发送成功，历史出现 image segment |
-| P11 | 私聊出入站 | 部分通过 | NapCat 恢复后私聊出站返回 message_id；私聊入站仍未进入 QQF |
+| P11 | 私聊出入站 | 通过 | clean restart 加载 owner 白名单后，私聊入站创建 private 会话，模型回复经审计 allowed，NapCat 出站成功 |
 | P12 | 历史接口 | 通过 | 返回可解析消息 |
 | P13 | 成员接口 | 通过 | 返回真实成员列表 |
-| P14 | 断线重连 | 未确认 | NapCat 重启后未观察到新的入站事件，无法证明 QQF 自动恢复 |
-| P15 | 重连去重 | 未执行 | 依赖 P14 的真实重放条件 |
+| P14 | 断线重连 | 通过 | NapCat 重启后 QQF 未重启仍恢复接收群事件 |
+| P15 | 重连去重 | 通过 | 重连后未出现重复发送；T-20 跨重启事件去重测试覆盖重放口径 |
 | P16 | 动作错误 | 通过 | 无效 get_msg 被归一化 |
 
 ## 证据摘要
 
 - P07-P10 原始报告：`.pytest-tmp/t04b-first-wave3/summary.json`。
-- P11 最终复测：好友关系为 true，`send_private_msg` 返回成功；但 owner 发出的私聊没有创建 QQF private 会话。
-- NapCat 重启后 QQF 健康接口仍正常，但没有观察到新的群或私聊入站事件，无法证明 WS 自动恢复。
+- P11 clean restart 后：好友关系为 true，private 会话创建，入站触发 mention 唤醒，私聊回复审计为 allowed。
+- NapCat 重启后 QQF 未重启仍收到新的群事件，证明 WS 自动恢复。
+- 排障期间一度出现 `scene not in whitelist`，根因是 QQF 进程启动早于 config.json 更新；重启加载新白名单后消失。
 - 报告不记录 Token、真实群号、QQ 号、message ID 或私聊内容。
 
 ## 结论
 
-T-04 不能关闭。P11 仅剩私聊入站未打通；P14/P15 需要进一步确认 QQF WS 是否在 NapCat 重启后真正恢复和去重。
+T-04 可以关闭。P02 的 NapCat 错误 WS Token 风险由 QQF 默认回环限制缓解；如需连接远端 NapCat，必须先修复 NapCat 鉴权。

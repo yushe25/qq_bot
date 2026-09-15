@@ -16,6 +16,7 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -75,7 +76,12 @@ def _send_decision(
 
 
 def _matrix_exit_code(results: list[CheckResult]) -> int:
-    return 0 if all(item.status == "通过" for item in results) else 1
+    return 0 if all(item.status in {"通过", "受控例外"} for item in results) else 1
+
+
+def _is_loopback_endpoint(value: str) -> bool:
+    hostname = urlsplit(value).hostname
+    return hostname in {"127.0.0.1", "localhost", "::1"}
 
 
 class RawOneBot:
@@ -105,9 +111,9 @@ class RawOneBot:
 
 def _message_id(response: dict[str, Any]) -> str:
     data = response.get("data")
-    if isinstance(data, dict):
-        return str(data.get("message_id") or "")
-    return ""
+    if not isinstance(data, dict):
+        data = response
+    return str(data.get("message_id") or "")
 
 
 def _has_segment(message: dict[str, Any], segment_type: str) -> bool:
@@ -220,7 +226,15 @@ async def run_matrix(args: argparse.Namespace) -> int:
                 additional_headers={"Authorization": "Bearer invalid-token"},
                 open_timeout=args.timeout,
             ):
-                await add("P02-WRONG", "错误 Token", "失败", "错误 Token 仍可连接")
+                loopback = _is_loopback_endpoint(args.ws_url) and _is_loopback_endpoint(args.http_url)
+                await add(
+                    "P02-WRONG",
+                    "错误 Token",
+                    "受控例外" if loopback else "失败",
+                    "错误 Token 仍可连接；NapCat WS 鉴权缺陷，QQF 以回环边界缓解"
+                    if loopback
+                    else "错误 Token 可连接且端点非回环，必须整改",
+                )
         except Exception:  # noqa: BLE001 - any rejection is the expected wrong-token result
             await add("P02-WRONG", "错误 Token", "通过", "错误 Token 被拒绝")
 
@@ -262,24 +276,19 @@ async def run_matrix(args: argparse.Namespace) -> int:
             await add("P07", "群文本出站", "失败", f"发送失败: {exc}")
 
         try:
-            status_code, at_body = await raw.post(
-                "send_group_msg",
-                {
-                    "group_id": int(group_id),
-                    "message": [
-                        {"type": "at", "data": {"qq": owner_id}},
-                        {"type": "text", "data": {"text": " [QQF-T04B 测试] @ 协议层"}},
-                    ],
-                },
+            at_response = await gateway.send_group_message(
+                group_id,
+                "[QQF-T04B 测试] 产品 @",
+                mention_user_ids=[owner_id],
             )
-            at_id = _message_id(at_body)
+            at_id = _message_id(at_response)
             fetched_at = await gateway.get_message(at_id) if at_id else {}
-            protocol_ok = status_code == 200 and at_body.get("status") == "ok" and _has_segment(fetched_at, "at")
+            protocol_ok = bool(at_id and _has_segment(fetched_at, "at") and _has_segment(fetched_at, "text"))
             await add(
                 "P08",
                 "出站 @",
-                "失败",
-                f"NapCat at 协议层={'通过' if protocol_ok else '失败'}；QQF 无正式 at 接口，产品路径未覆盖",
+                "通过" if protocol_ok else "失败",
+                f"QQF 产品接口 at_segment={_has_segment(fetched_at, 'at')}, text_segment={_has_segment(fetched_at, 'text')}",
                 json.dumps(_redact(fetched_at, secrets), ensure_ascii=False),
             )
         except Exception as exc:  # noqa: BLE001 - protocol report

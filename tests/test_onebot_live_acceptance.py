@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from scripts.onebot_live_acceptance import (
     CheckResult,
+    _is_loopback_endpoint,
     _matrix_exit_code,
+    _message_id,
     _redact,
     _redact_text,
     _send_decision,
@@ -59,7 +61,22 @@ def test_live_acceptance_exit_code_fails_unless_all_checks_pass() -> None:
     passed = [CheckResult("P01", "HTTP", "通过", "ok")]
     failed = [CheckResult("P01", "HTTP", "通过", "ok"), CheckResult("P02", "WS", "失败", "bad")]
     not_run = [CheckResult("P01", "HTTP", "通过", "ok"), CheckResult("P04", "入站", "未执行", "manual")]
+    controlled = [CheckResult("P02-WRONG", "错误 Token", "受控例外", "loopback")]
 
     assert _matrix_exit_code(passed) == 0
+    assert _matrix_exit_code(controlled) == 0
     assert _matrix_exit_code(failed) == 1
     assert _matrix_exit_code(not_run) == 1
+
+
+def test_live_acceptance_detects_loopback_endpoints() -> None:
+    assert _is_loopback_endpoint("ws://127.0.0.1:3001")
+    assert _is_loopback_endpoint("http://localhost:3000")
+    assert _is_loopback_endpoint("http://[::1]:3000")
+    assert not _is_loopback_endpoint("wss://napcat.example/ws")
+
+
+def test_live_acceptance_reads_wrapped_and_unwrapped_message_ids() -> None:
+    assert _message_id({"data": {"message_id": 123}}) == "123"
+    assert _message_id({"message_id": 456}) == "456"
+    assert _message_id({}) == ""

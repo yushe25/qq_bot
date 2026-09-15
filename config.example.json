@@ -105,6 +105,27 @@
   "stickerDir": "stickers",
   "sticker": {
     "enabled": false,
-    "allowedIds": ["pilot-01"]
+    "allowedIds": ["pilot-01"],
+    "autoTag": {
+      "enabled": false,
+      "provider": "vision-main",
+      "fallbacks": ["vision-backup"],
+      "providers": {
+        "vision-main": {
+          "type": "openai-compatible",
+          "baseUrl": "https://example.invalid/v1",
+          "apiKeyEnv": "QQF_VISION_API_KEY",
+          "model": "vision-model",
+          "timeoutSeconds": 120,
+          "maxRetries": 1
+        },
+        "vision-backup": {
+          "type": "openai-compatible",
+          "baseUrl": "https://backup.invalid/v1",
+          "apiKeyEnv": "QQF_VISION_BACKUP_API_KEY",
+          "model": "vision-backup-model"
+        }
+      }
+    }
   }
 }

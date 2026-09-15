@@ -9,6 +9,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.sticker_limits import MAX_STICKER_DESCRIPTION_CHARS, MAX_STICKER_TAGS
+
 _PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 _BLOCKED_EXTRA_HEADERS = {"authorization", "content-type"}
@@ -173,14 +175,80 @@ class LearningConfig(BaseModel):
     exclude_members: list[str] = Field(default_factory=list)
 
 
+class StickerAutoTagProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["openai-compatible"] = "openai-compatible"
+    base_url: str
+    api_key_env: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    timeout_seconds: float = Field(default=120.0, ge=1.0, le=300.0)
+    max_retries: int = Field(default=1, ge=0, le=5)
+    extra_headers: dict[str, str] = Field(default_factory=dict)
+    max_image_bytes: int = Field(default=8 * 1024 * 1024, ge=1)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        return _validate_https_base_url(value)
+
+    @field_validator("extra_headers")
+    @classmethod
+    def validate_extra_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_extra_headers(value)
+
+
+class StickerAutoTagConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    provider: str = ""
+    fallbacks: list[str] = Field(default_factory=list)
+    providers: dict[str, StickerAutoTagProviderConfig] = Field(default_factory=dict)
+    max_tags: int = Field(default=MAX_STICKER_TAGS, ge=1, le=MAX_STICKER_TAGS)
+    max_description_chars: int = Field(
+        default=MAX_STICKER_DESCRIPTION_CHARS,
+        ge=1,
+        le=MAX_STICKER_DESCRIPTION_CHARS,
+    )
+
+    @field_validator("provider")
+    @classmethod
+    def normalize_provider(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @model_validator(mode="after")
+    def validate_provider_routing(self) -> StickerAutoTagConfig:
+        for provider_id in self.providers:
+            if not _PROVIDER_ID_RE.fullmatch(provider_id):
+                raise ValueError(f"invalid sticker.autoTag.providers key: {provider_id!r}")
+        if not self.enabled:
+            return self
+        if not self.provider:
+            raise ValueError("sticker.autoTag.enabled=true requires provider")
+        if self.provider not in self.providers:
+            raise ValueError("sticker.autoTag.provider must exist in providers")
+        if len(self.fallbacks) != len(set(self.fallbacks)):
+            raise ValueError("sticker.autoTag.fallbacks must not contain duplicates")
+        for fallback in self.fallbacks:
+            if fallback == self.provider:
+                raise ValueError("sticker.autoTag.fallbacks must not contain the primary provider")
+            if fallback not in self.providers:
+                raise ValueError(f"sticker.autoTag.fallbacks references unknown provider {fallback!r}")
+        return self
+
+
 class StickerConfig(BaseModel):
     enabled: bool = False
     allowed_ids: list[str] = Field(default_factory=list)
+    auto_tag: StickerAutoTagConfig = Field(default_factory=StickerAutoTagConfig)
 
     @model_validator(mode="after")
     def validate_allowed_ids(self) -> StickerConfig:
         if self.enabled and not self.allowed_ids:
             raise ValueError("sticker.enabled=true requires sticker.allowedIds")
+        if self.auto_tag.enabled and not self.auto_tag.providers:
+            raise ValueError("sticker.autoTag.enabled=true requires providers")
         return self
 
 

@@ -331,6 +331,15 @@ python scripts/onebot_check.py
 受保护的 `POST /api/ws-ticket` 申请一次性 ticket，`WS /ws/live?ticket=<ticket>` 只携带
 短时凭证；ticket 60 秒过期、单次使用并绑定来源。控制台页面启动后可通过右上角 Token 按钮录入。
 
+## 数据库备份与恢复
+
+```text
+.venv\Scripts\python.exe scripts\backup_db.py --database state\qqf.db --backup-dir state\backups --keep 7
+.venv\Scripts\python.exe scripts\restore_db.py --backup state\backups\<backup>.db --database state\qqf.db --force
+```
+
+数据库启动时会执行版本迁移；迁移前自动生成备份，失败时保留原库并停止启动。干净停机会执行 WAL checkpoint，运行中 WAL 超过 64 MiB 会记录 WARN。恢复前必须先停止 QQF；不带 `--force` 时不会覆盖现有数据库。
+
 ## 目录结构
 
 ```text

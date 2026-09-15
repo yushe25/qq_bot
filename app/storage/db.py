@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
 from app.domain.types import Session, WakeInput, now_ms, wake_input_from_json, wake_input_to_json
+from app.storage.migrations import Migration, run_migrations
+
+logger = logging.getLogger("qqf.storage")
+DEFAULT_WAL_WARN_BYTES = 64 * 1024 * 1024
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -183,10 +188,16 @@ def _session_params(session: Session) -> tuple[Any, ...]:
 class StateStore:
     """Async facade over SQLite using an event-loop lock plus worker-thread execution."""
 
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(
+        self,
+        database_path: str | Path,
+        *,
+        wal_warn_bytes: int = DEFAULT_WAL_WARN_BYTES,
+    ) -> None:
         self._path = Path(database_path)
         self._conn: sqlite3.Connection | None = None
         self._lock = asyncio.Lock()
+        self._wal_warn_bytes = max(0, int(wal_warn_bytes))
 
     async def init(self) -> None:
         async with self._lock:
@@ -197,7 +208,7 @@ class StateStore:
             conn = self._conn
             self._conn = None
             if conn is not None:
-                await asyncio.to_thread(conn.close)
+                await asyncio.to_thread(_close_connection_sync, conn)
 
     async def upsert_session(self, session: Session) -> None:
         await self._execute(_UPSERT_SESSION_SQL, _session_params(session))
@@ -668,12 +679,22 @@ class StateStore:
 
     def _open_locked(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        run_migrations(
+            self._path,
+            _MIGRATIONS,
+            backup_dir=self._path.parent / "backups",
+        )
         conn = sqlite3.connect(self._path, check_same_thread=False, isolation_level=None)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript(_SCHEMA)
-        _migrate_schema(conn)
         self._conn = conn
+        wal_size = _wal_size_bytes(self._path)
+        if self._wal_warn_bytes > 0 and wal_size >= self._wal_warn_bytes:
+            logger.warning(
+                "SQLite WAL size is %s bytes (threshold %s)",
+                wal_size,
+                self._wal_warn_bytes,
+            )
 
     def _connection(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -848,3 +869,31 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     for column in ("prompt_tokens", "completion_tokens", "total_tokens"):
         if column not in wake_log_columns:
             conn.execute(f"ALTER TABLE wake_log ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
+
+
+def _apply_initial_schema(conn: sqlite3.Connection) -> None:
+    for statement in _SCHEMA.split(";"):
+        if statement.strip():
+            conn.execute(statement)
+    _migrate_schema(conn)
+
+
+_MIGRATIONS = (
+    Migration(version=1, name="initial_schema", apply=_apply_initial_schema),
+)
+
+
+def _wal_size_bytes(database_path: Path) -> int:
+    wal_path = Path(f"{database_path}-wal")
+    try:
+        return wal_path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _close_connection_sync(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error:
+        logger.warning("SQLite WAL checkpoint failed during shutdown", exc_info=True)
+    conn.close()

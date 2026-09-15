@@ -3,7 +3,7 @@
 - 日期：2026-09-15
 - 基线：`5db43f1` 加 T-25 未提交改动
 - 交办单：`docs/reports/T-25B-sticker-closure-real-vision-handoff-20260915.md`
-- 结论：`T-25B.1` 至 `T-25B.7` 已完成；只剩提交与回滚闭环，当前受 `.git` 写权限阻塞。
+- 结论：`T-25B.1` 至 `T-25B.8` 已完成，T-25 代码和验收已形成本地可回滚提交；新发现 T-26，建议单独立项。
 
 ## 一、完成项
 
@@ -157,12 +157,26 @@ T-25B.6 完成。
 
 ### T-25B.8 提交与回滚
 
-当前线程 `.git` 仍是只读策略，写 `.git/index.lock` 返回 `Access denied`。
-自动审批服务当前也不可用，因此没有创建 T-25 提交。
+项目方在外部 PowerShell 中执行指定提交脚本，已创建三个本地提交：
 
-未提交内容不包括 `config.json`、`stickers/`、`personas/sticker-pilot.yaml`、`state/` 或日志。
+```text
+33f995a feat(T-25): add semantic sticker selection
+56b82a0 feat(T-25): add independent sticker auto-tagging
+31a8508 docs(T-25): document sticker selection and real acceptance
+```
+
+没有 push。提交内容检查未发现 `config.json`、`stickers/`、`personas/sticker-pilot.yaml`、
+`state/`、日志、密钥或真实群号。工作区仍保留项目方原有的 `.gitignore` 修改和历史未跟踪交办单，
+T-25 提交未混入这些文件。
+
+回滚方式：
+
+```text
+git reset --hard 5db43f1
+```
+
+回滚后恢复 `stickers/manifest.yaml.bak`，并将 `sticker.enabled` 设回 `false` 后重启 QQF。
 
 ## 五、下一步
 
-1. 在 git 写权限生效后，将 T-25/T-25B 改动形成可回滚提交。
-2. 单独立项修复 T-26 的 mention 延迟覆盖问题。
+1. 单独立项修复 T-26 的 mention 延迟覆盖问题。

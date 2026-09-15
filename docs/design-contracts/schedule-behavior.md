@@ -9,7 +9,7 @@
 
 - 可配置的作息窗口，非活跃时段不主动发言。
 - 类人的回复延迟分布，而不是固定时间。
-- 随机但受控的发言节奏：单条、多条、纯表情、潜水。
+- 随机但受控的发言节奏：单条、多条、潜水；纯表情由模型根据素材语义主动决定。
 
 ## 非目标
 
@@ -43,15 +43,12 @@ schedule:
   mention_delay:
     min_seconds: 4
     max_seconds: 12
-  sticker_only_probability: 0.15
-  sticker_with_text_probability: 0.30
 ```
 
 约束：
 
 - 延迟范围必须满足 `min <= max`，单条延迟不超过 60 秒。
 - 多段发言之间可按 `reply_delay` 再随机停顿。
-- `sticker_only_probability + sticker_with_text_probability <= 1`。
 - 作息只影响调度，不影响安全管线。
 
 ## 安全边界
@@ -90,3 +87,5 @@ schedule:
 - 每日发送上限按本地时区日期计数，只在实际发送成功后递增；熔断后不自动恢复，控制台提供 `POST /api/sessions/{session_id}/reset-daily-sends`。
 - 唤醒和发送限流同时维护全局分钟、全局小时、会话分钟与会话小时窗口；任一窗口满额都会延后到最早可用时间。
 - 配置修改需要重启生效；重启后每日计数、会话状态与作息来自 SQLite 持久化。
+- `sticker_only_probability` 与 `sticker_with_text_probability` 已 deprecated；字段暂时保留解析兼容，
+  但不再参与运行时选图，后续版本单独删除。

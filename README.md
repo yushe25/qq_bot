@@ -188,11 +188,45 @@ python scripts/onebot_check.py
 
 ## 表情与入站媒体
 
-- 表情总开关 `sticker.enabled` 默认关闭；关闭时模型看不到 `sticker_send`，自动追加逻辑也不会发送表情。
+- 表情总开关 `sticker.enabled` 默认关闭；关闭时模型看不到 `sticker_send`，也不会发送表情。
 - 表情库使用本地目录 + `manifest.yaml` 白名单：只发送 `approved: true` 且通过 MediaGuard 校验的本地文件。
-- 模型可调用 `sticker_send`，发送计入限流、每日上限、成员数护栏与审计；发送后 `usage_count` 递增。
+- 模型读取受限语义目录后调用 `sticker_send`；每轮最多一张，可只发表情或文字加表情，没有合适素材时必须纯文字。
+- 表情发送计入限流、每日上限、成员数护栏与审计；发送后 `usage_count` 递增。
+- `sticker.autoTag` 使用独立视觉 Provider 自动生成名称、说明和标签；密钥只放环境变量，结果立即写入 manifest，重启后生效。
+- persona `schedule` 中的 `sticker_only_probability`、`sticker_with_text_probability` 已 deprecated，仅保留解析兼容。
 - 入站图片、QQ 表情、语音、文件、转发卡片在归一化阶段摘要为 `[图片]`、`[表情:178:抠鼻]`、`[语音]`、`[文件:文件名]`、`[分享卡片]`，不携带原始文件内容。
 - 禁止远程抓取、绝对路径逃逸和未知 id；路径类或文件大小/像素超限的请求直接拒绝。
+
+### 素材自动标注
+
+自动标注使用独立的 `sticker.autoTag` Provider，不复用聊天模型密钥。密钥只放在 `apiKeyEnv` 指定的环境变量中；图片会先经过 MediaGuard，再发送给视觉模型。
+
+```json
+{
+  "sticker": {
+    "autoTag": {
+      "enabled": true,
+      "provider": "vision-main",
+      "providers": {
+        "vision-main": {
+          "baseUrl": "https://example.invalid/v1",
+          "apiKeyEnv": "QQF_VISION_API_KEY",
+          "model": "vision-model"
+        }
+      }
+    }
+  }
+}
+```
+
+```text
+.venv\Scripts\python.exe scripts\tag_stickers.py --config config.json --id pilot-01
+.venv\Scripts\python.exe scripts\tag_stickers.py --config config.json --all
+.venv\Scripts\python.exe scripts\tag_stickers.py --config config.json --id pilot-01 --force
+.venv\Scripts\python.exe scripts\tag_stickers.py --config config.json --id pilot-01 --dry-run
+```
+
+自动结果立即写入 `stickers/manifest.yaml`，并备份为 `manifest.yaml.bak`；YAML 注释不保证保留。`tag_source=manual` 的素材默认跳过，`--force` 可覆盖。修改 manifest 后需要重启 QQF，运行中的实例不会热加载。模型没有合适素材时应直接发纯文字，不随机补图。
 
 ## 自主学习
 
@@ -263,6 +297,10 @@ python scripts/onebot_check.py
 | `storage.databasePath` | SQLite 状态库路径 | `state/qqf.db` |
 | `sticker.enabled` | 表情发送总开关；默认关闭 | `false` |
 | `sticker.allowedIds` | 灰度期间允许发送的素材 ID；开启时必须非空 | `[]` |
+| `sticker.autoTag.enabled` | 是否启用独立视觉模型自动标注 | `false` |
+| `sticker.autoTag.provider` | 自动标注主 Provider ID | 空 |
+| `sticker.autoTag.fallbacks` | 仅限流、超时、服务不可用时尝试的备用 Provider ID | `[]` |
+| `sticker.autoTag.providers` | 独立视觉 Provider 注册表；API Key 只从 `apiKeyEnv` 读取 | `{}` |
 | `personaPath` | 人格 YAML 路径 | `personas/default.yaml` |
 
 环境变量会被 JSON 配置覆盖逻辑合并：`QQF_LLM_API_KEY`、`QQF_ONEBOT_TOKEN`、`QQF_CONSOLE_TOKEN`、`QQF_DATA_DIR`。命名 Provider 的 Key 由各自的 `apiKeyEnv` 指定，例如 `DEEPSEEK_API_KEY`；JSON 中的明文 `apiKey` 会被拒绝。`QQF_DATA_DIR` 会改变状态库目录。程序启动时会在状态目录创建 `qqf.lock`，重复启动会直接退出，避免两个实例同时写同一个 SQLite 库。

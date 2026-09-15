@@ -7,6 +7,7 @@ from app.agent.llm_provider import ChatRequest, ChatResult
 from app.domain.types import (
     MessageSegment,
     NormalizedEvent,
+    SessionState,
     TriggerCategory,
     WakeInput,
     now_ms,
@@ -14,6 +15,7 @@ from app.domain.types import (
     wake_input_to_json,
 )
 from app.runtime.schedule import DelayRange, ScheduleProfile
+from app.runtime.scheduler import MAX_PENDING_WAKE_EVENTS, _merge_pending_wakes
 from app.runtime.session_manager import SessionManager
 from app.safety.rate_limiter import RateLimiter
 from app.storage.db import StateStore
@@ -80,6 +82,80 @@ def test_classify_private_message_force_wakes(stack: TestStack) -> None:
     category, reason = stack.scheduler._classify([event])
     assert category == TriggerCategory.MENTION
     assert "私聊" in reason
+
+
+def test_merge_pending_wakes_does_not_downgrade_mention() -> None:
+    current = WakeInput(
+        session_id="group:100000",
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_event("group:100000", "在吗", event_id="mention-1"),),
+    )
+    incoming = WakeInput(
+        session_id="group:100000",
+        category=TriggerCategory.NORMAL,
+        reason="普通消息概率唤醒",
+        events=(_event("group:100000", "继续聊", event_id="normal-1"),),
+        probability=0.04,
+    )
+
+    merged = _merge_pending_wakes(current, incoming)
+
+    assert merged.category == TriggerCategory.MENTION
+    assert merged.reason == "消息中包含 @"
+    assert merged.probability is None
+    assert merged.deferred is True
+    assert [event.event_id for event in merged.events] == ["mention-1", "normal-1"]
+
+
+def test_merge_pending_wakes_promotes_normal_to_mention() -> None:
+    current = WakeInput(
+        session_id="group:100000",
+        category=TriggerCategory.NORMAL,
+        reason="普通消息概率唤醒",
+        events=(_event("group:100000", "普通", event_id="normal-1"),),
+        probability=0.04,
+    )
+    incoming = WakeInput(
+        session_id="group:100000",
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_event("group:100000", "在吗", event_id="mention-1"),),
+    )
+
+    merged = _merge_pending_wakes(current, incoming)
+
+    assert merged.category == TriggerCategory.MENTION
+    assert merged.reason == "消息中包含 @"
+    assert merged.probability is None
+    assert [event.event_id for event in merged.events] == ["normal-1", "mention-1"]
+
+
+def test_merge_pending_wakes_force_wins_and_keeps_recent_events() -> None:
+    current = WakeInput(
+        session_id="group:100000",
+        category=TriggerCategory.FORCE,
+        reason="控制台强制唤醒",
+        events=tuple(_event("group:100000", f"force-{index}", event_id=f"force-{index}") for index in range(35)),
+        defer_until_active=True,
+    )
+    incoming = WakeInput(
+        session_id="group:100000",
+        category=TriggerCategory.NORMAL,
+        reason="普通消息概率唤醒",
+        events=tuple(_event("group:100000", f"normal-{index}", event_id=f"normal-{index}") for index in range(10)),
+        phase_ready=True,
+    )
+
+    merged = _merge_pending_wakes(current, incoming)
+
+    assert merged.category == TriggerCategory.FORCE
+    assert merged.reason == "控制台强制唤醒"
+    assert merged.defer_until_active is True
+    assert merged.phase_ready is True
+    assert len(merged.events) == MAX_PENDING_WAKE_EVENTS
+    assert merged.events[0].event_id == "force-5"
+    assert merged.events[-1].event_id == "normal-9"
 
 
 def test_wake_input_serialization_roundtrip_excludes_raw() -> None:
@@ -301,7 +377,10 @@ async def test_rate_limited_wake_is_deferred_with_pending_context_and_tick_consu
 
     await stack.scheduler._decide_and_run(session, wake)
 
-    assert stack.scheduler._pending_wakes[session.id] == wake
+    pending = stack.scheduler._pending_wakes[session.id]
+    assert pending.category == wake.category
+    assert pending.reason == wake.reason
+    assert pending.deferred is True
     assert session.next_wake_at > now_ms()
     logs = await stack.store.list_wake_logs(session.id)
     assert any(item["decided"] == "deferred" and item["reason"] == wake.reason for item in logs)
@@ -313,6 +392,98 @@ async def test_rate_limited_wake_is_deferred_with_pending_context_and_tick_consu
     assert session.id not in stack.scheduler._pending_wakes
     logs = await stack.store.list_wake_logs(session.id)
     assert any(item["decided"] == "wake" and item["reason"] == wake.reason for item in logs)
+
+
+async def test_cooldown_mention_is_not_overwritten_by_normal_message(
+    stack: TestStack,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.runtime.scheduler.now_local",
+        lambda profile: datetime(2026, 9, 9, 20, 0, tzinfo=timezone(timedelta(hours=8))),
+    )
+    session = stack.sessions.ensure_session("group", "100000")
+    session.state = SessionState.COOLDOWN
+    session.cooldown_until = now_ms() + 60_000
+    mention = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_event(session.id, "在吗", event_id="mention-cool-1"),),
+    )
+    normal = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.NORMAL,
+        reason="普通消息概率唤醒",
+        events=(_event(session.id, "顺便说一句", event_id="normal-cool-1"),),
+        probability=0.04,
+    )
+    dispatched: list[WakeInput] = []
+
+    def capture_dispatch(session_arg, wake_arg: WakeInput) -> None:
+        dispatched.append(wake_arg)
+
+    monkeypatch.setattr(stack.scheduler, "_dispatch", capture_dispatch)
+    await stack.scheduler._decide_and_run(session, mention)
+    await stack.scheduler._decide_and_run(session, normal)
+
+    pending = stack.scheduler._pending_wakes[session.id]
+    assert pending.category == TriggerCategory.MENTION
+    assert pending.reason == "消息中包含 @"
+    assert [event.event_id for event in pending.events] == ["mention-cool-1", "normal-cool-1"]
+    persisted = await stack.store.load_pending_wakes()
+    assert len(persisted) == 1
+    assert persisted[0][2].category == TriggerCategory.MENTION
+
+    session.cooldown_until = now_ms() - 1.0
+    session.next_wake_at = now_ms() - 1.0
+    await stack.scheduler.tick()
+    await stack.scheduler.tick()
+
+    assert dispatched
+    assert dispatched[-1].category == TriggerCategory.MENTION
+    logs = await stack.store.list_wake_logs(session.id)
+    assert any(item["decided"] == "wake" and item["category"] == "mention" for item in logs)
+    assert not any(item["decided"] == "wake" and item["category"] == "normal" for item in logs)
+
+
+async def test_merged_pending_wake_survives_restart(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    session.next_wake_at = now_ms() + 120_000
+    merged = _merge_pending_wakes(
+        WakeInput(
+            session_id=session.id,
+            category=TriggerCategory.MENTION,
+            reason="消息中包含 @",
+            events=(_event(session.id, "在吗", event_id="restart-mention"),),
+        ),
+        WakeInput(
+            session_id=session.id,
+            category=TriggerCategory.NORMAL,
+            reason="普通消息概率唤醒",
+            events=(_event(session.id, "后续消息", event_id="restart-normal"),),
+            probability=0.04,
+        ),
+    )
+    await stack.store.save_deferred_wake(session, merged)
+    await stack.store.close()
+
+    reopened = StateStore(stack.config.storage.database_path)
+    await reopened.init()
+    sessions = SessionManager(reopened)
+    await sessions.load()
+    stack.scheduler.store = reopened
+    stack.scheduler.sessions = sessions
+    stack.scheduler._pending_wakes.clear()
+    stack.scheduler._started = False
+
+    await stack.scheduler.start()
+
+    restored = stack.scheduler._pending_wakes[session.id]
+    assert restored == merged
+    assert restored.category == TriggerCategory.MENTION
+    assert [event.event_id for event in restored.events] == ["restart-mention", "restart-normal"]
+    await reopened.close()
 
 
 async def test_quiet_window_defers_non_owner_mention(stack: TestStack, monkeypatch) -> None:

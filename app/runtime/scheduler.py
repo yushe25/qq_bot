@@ -30,6 +30,19 @@ from app.storage.db import StateStore
 
 logger = logging.getLogger("qqf.scheduler")
 
+MAX_PENDING_WAKE_EVENTS = 40
+
+WAKE_PRIORITY = {
+    TriggerCategory.FORCE: 70,
+    TriggerCategory.MENTION: 60,
+    TriggerCategory.NAME: 50,
+    TriggerCategory.QUESTION: 40,
+    TriggerCategory.KEYWORD: 30,
+    TriggerCategory.POKE: 20,
+    TriggerCategory.NORMAL: 10,
+    TriggerCategory.SCHEDULED: 0,
+}
+
 HIGH_PRIORITY = {
     TriggerCategory.MENTION,
     TriggerCategory.NAME,
@@ -37,6 +50,22 @@ HIGH_PRIORITY = {
     TriggerCategory.KEYWORD,
     TriggerCategory.POKE,
 }
+
+
+def _merge_pending_wakes(current: WakeInput | None, incoming: WakeInput) -> WakeInput:
+    if current is None:
+        return replace(incoming, deferred=True)
+    winner = current
+    if WAKE_PRIORITY[incoming.category] > WAKE_PRIORITY[current.category]:
+        winner = incoming
+    events = (*current.events, *incoming.events)[-MAX_PENDING_WAKE_EVENTS:]
+    return replace(
+        winner,
+        events=events,
+        deferred=True,
+        defer_until_active=current.defer_until_active or incoming.defer_until_active,
+        phase_ready=current.phase_ready or incoming.phase_ready,
+    )
 
 
 class Scheduler:
@@ -468,8 +497,14 @@ class Scheduler:
         if session.state == SessionState.COOLDOWN and now_ms() >= session.cooldown_until:
             session.state = SessionState.IDLE
         if wake is not None:
-            self._pending_wakes[session.id] = wake
-            await self.store.save_deferred_wake(session, wake)
+            merged = _merge_pending_wakes(self._pending_wakes.get(session.id), wake)
+            self._pending_wakes[session.id] = merged
+            await self.store.save_deferred_wake(session, merged)
+            logger.debug(
+                "pending wake merged kept=%s incoming=%s",
+                merged.category.value,
+                wake.category.value,
+            )
         else:
             await self.sessions.save(session)
         logger.info("session %s deferred (%s) until %.0f", session.id, reason, session.next_wake_at)

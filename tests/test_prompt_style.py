@@ -42,6 +42,16 @@ def test_mention_prompt_requires_reply_before_dive() -> None:
     assert "不要手写 @ 或 CQ 码" in prompt
 
 
+def test_prompt_requires_safe_mention_user_ids() -> None:
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+
+    prompt = build_system_prompt(session, DEFAULT_PERSONA)
+
+    assert "mentionUserIds" in prompt
+    assert "只能来自最近消息或群成员工具" in prompt
+    assert "不要每条都 @" in prompt
+
+
 def test_scheduled_prompt_does_not_require_a_reply() -> None:
     session = Session(id="group:100000", scene_type="group", scene_id="100000")
     prompt = build_system_prompt(

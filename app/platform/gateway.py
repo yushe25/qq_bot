@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -14,7 +14,13 @@ class QQGateway(Protocol):
     def on_event(self, handler: EventHandler) -> None: ...
     async def disconnect(self) -> None: ...
     async def get_message(self, message_id: str) -> dict[str, object]: ...
-    async def send_group_message(self, group_id: str, text: str, reply_to_message_id: str | None = None) -> dict[str, object]: ...
+    async def send_group_message(
+        self,
+        group_id: str,
+        text: str,
+        reply_to_message_id: str | None = None,
+        mention_user_ids: Sequence[str] = (),
+    ) -> dict[str, object]: ...
     async def send_private_message(self, user_id: str, text: str, reply_to_message_id: str | None = None) -> dict[str, object]: ...
     async def send_group_sticker(self, group_id: str, file_path: str, reply_to_message_id: str | None = None) -> dict[str, object]: ...
     async def send_private_sticker(self, user_id: str, file_path: str, reply_to_message_id: str | None = None) -> dict[str, object]: ...
@@ -45,8 +51,20 @@ class NullGateway:
     async def get_message(self, message_id: str) -> dict[str, object]:
         return self.messages.get(message_id, {})
 
-    async def send_group_message(self, group_id: str, text: str, reply_to_message_id: str | None = None) -> dict[str, object]:
-        item = {"group_id": group_id, "text": text, "reply_to": reply_to_message_id, "ts": now_ms()}
+    async def send_group_message(
+        self,
+        group_id: str,
+        text: str,
+        reply_to_message_id: str | None = None,
+        mention_user_ids: Sequence[str] = (),
+    ) -> dict[str, object]:
+        item = {
+            "group_id": group_id,
+            "text": text,
+            "reply_to": reply_to_message_id,
+            "mention_user_ids": list(mention_user_ids),
+            "ts": now_ms(),
+        }
         self.sent.append(item)
         return {"message_id": f"mock-{len(self.sent)}"}
 

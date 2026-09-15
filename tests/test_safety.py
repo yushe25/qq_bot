@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.agent.tools import ToolContext
 from app.domain.types import Session
 from app.platform.gateway import NullGateway
@@ -110,6 +112,132 @@ async def test_safety_pipeline_sends_allowed_message(stack: TestStack) -> None:
 
     assert results[0]["ok"] is True
     assert len(stack.gateway.sent) == 1
+
+
+async def test_safety_pipeline_sends_mentions_only_on_first_segment(stack: TestStack) -> None:
+    stack.config.safety.max_group_members = 0
+    stack.gateway.members = [
+        {"user_id": 10001, "nickname": "甲"},
+        {"user_id": 10002, "nickname": "乙"},
+    ]
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append(
+        {
+            "type": "send_group",
+            "group_id": "100000",
+            "message": "在吗，帮我看看",
+            "mention_user_ids": ["10001"],
+        }
+    )
+
+    results = await stack.safety.execute_outbox(context, stack.gateway)
+
+    assert [item["ok"] for item in results] == [True, True]
+    assert [item["text"] for item in stack.gateway.sent] == ["在吗", "帮我看看"]
+    assert stack.gateway.sent[0]["mention_user_ids"] == ["10001"]
+    assert stack.gateway.sent[1]["mention_user_ids"] == []
+    audits = await stack.store.list_audit(limit=20)
+    assert any(item["detail"] == "群 100000 消息 mentions=1" for item in audits)
+
+
+async def test_safety_pipeline_rejects_mention_outside_current_group(stack: TestStack) -> None:
+    stack.gateway.members = [{"user_id": 10001, "nickname": "甲"}]
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append(
+        {
+            "type": "send_group",
+            "group_id": "100000",
+            "message": "叫一下",
+            "mention_user_ids": ["10002"],
+        }
+    )
+
+    results = await stack.safety.execute_outbox(context, stack.gateway)
+
+    assert results[0]["ok"] is False
+    assert "不在当前群成员列表" in results[0]["reason"]
+    assert stack.gateway.sent == []
+
+
+async def test_safety_pipeline_fails_closed_when_mention_member_query_errors(stack: TestStack) -> None:
+    class BrokenMembersGateway(NullGateway):
+        async def get_group_members(self, group_id: str) -> list[dict[str, object]]:
+            raise RuntimeError("member api down")
+
+    gateway = BrokenMembersGateway()
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append(
+        {
+            "type": "send_group",
+            "group_id": "100000",
+            "message": "叫一下",
+            "mention_user_ids": ["10001"],
+        }
+    )
+
+    results = await stack.safety.execute_outbox(context, gateway)
+
+    assert results[0]["ok"] is False
+    assert "成员数校验失败" in results[0]["reason"]
+    assert gateway.sent == []
+
+
+@pytest.mark.parametrize(
+    "mention_user_ids",
+    [
+        ["10001", "10001"],
+        [""],
+        ["abc"],
+        [1],
+        [str(10000 + index) for index in range(6)],
+    ],
+)
+async def test_safety_pipeline_rejects_malformed_mention_arrays(
+    stack: TestStack,
+    mention_user_ids: list[object],
+) -> None:
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append(
+        {
+            "type": "send_group",
+            "group_id": "100000",
+            "message": "测试",
+            "mention_user_ids": mention_user_ids,
+        }
+    )
+
+    results = await stack.safety.execute_outbox(context, stack.gateway)
+
+    assert results[0]["ok"] is False
+    assert stack.gateway.sent == []
 
 
 async def test_safety_pipeline_sends_allowed_owner_private_message(stack: TestStack) -> None:

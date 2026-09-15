@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import cast
 
+import pytest
+
 from app.agent.tools import ToolContext, execute_tool
 from app.domain.types import ToolCall, TriggerCategory
 from app.platform.gateway import QQGateway
@@ -117,6 +119,78 @@ async def test_qq_send_group_message_rejects_over_wake_limit(stack: TestStack) -
     assert result.success is False
     assert "最多发送" in result.message
     assert len(context.outbox) == 3
+
+
+async def test_qq_send_group_message_queues_safe_mentions(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+
+    result = await execute_tool(
+        context,
+        ToolCall(
+            name="qq_send_group_message",
+            arguments={
+                "groupId": "100000",
+                "message": "文件在这里",
+                "mentionUserIds": ["10001", "10002"],
+            },
+        ),
+    )
+
+    assert result.success is True
+    assert context.outbox == [
+        {
+            "type": "send_group",
+            "group_id": "100000",
+            "message": "文件在这里",
+            "mention_user_ids": ["10001", "10002"],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "mention_user_ids",
+    [
+        ["10001", "10001"],
+        [""],
+        ["abc"],
+        [str(10000 + index) for index in range(6)],
+    ],
+)
+async def test_qq_send_group_message_rejects_invalid_mentions(
+    stack: TestStack,
+    mention_user_ids: list[str],
+) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+
+    result = await execute_tool(
+        context,
+        ToolCall(
+            name="qq_send_group_message",
+            arguments={
+                "groupId": "100000",
+                "message": "测试",
+                "mentionUserIds": mention_user_ids,
+            },
+        ),
+    )
+
+    assert result.success is False
+    assert "mention" in result.message.lower() or "5 人" in result.message
+    assert context.outbox == []
 
 
 async def test_qq_send_private_message_queues_current_private_session(stack: TestStack) -> None:

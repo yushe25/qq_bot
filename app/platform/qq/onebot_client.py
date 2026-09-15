@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -112,14 +113,23 @@ class OneBotV11Gateway:
             raise RuntimeError(f"OneBot {action} failed: {detail}")
         return body.get("data") or {}
 
-    async def send_group_message(self, group_id: str, text: str, reply_to_message_id: str | None = None) -> dict[str, object]:
-        params: dict[str, Any] = {"group_id": int(group_id), "message": text, "auto_escape": True}
-        if reply_to_message_id:
-            params["message"] = [
-                {"type": "reply", "data": {"id": str(reply_to_message_id)}},
-                {"type": "text", "data": {"text": text}},
-            ]
-            params.pop("auto_escape")
+    async def send_group_message(
+        self,
+        group_id: str,
+        text: str,
+        reply_to_message_id: str | None = None,
+        mention_user_ids: Sequence[str] = (),
+    ) -> dict[str, object]:
+        if reply_to_message_id or mention_user_ids:
+            message: list[dict[str, Any]] = []
+            if reply_to_message_id:
+                message.append({"type": "reply", "data": {"id": str(reply_to_message_id)}})
+            for user_id in mention_user_ids:
+                message.append({"type": "at", "data": {"qq": str(user_id)}})
+            message.append({"type": "text", "data": {"text": text}})
+            params: dict[str, Any] = {"group_id": int(group_id), "message": message}
+        else:
+            params = {"group_id": int(group_id), "message": text, "auto_escape": True}
         return _dict_result(await self._post("send_group_msg", params))
 
     async def send_private_message(self, user_id: str, text: str, reply_to_message_id: str | None = None) -> dict[str, object]:

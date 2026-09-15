@@ -87,9 +87,17 @@ class SafetyPipeline:
         results: list[dict[str, Any]] = []
         sent_count = 0
         member_counts: dict[str, int] = {}
+        member_ids: dict[str, set[str]] = {}
         for raw_item in ctx.outbox:
             if str(raw_item.get("type", "")) == "send_sticker":
-                result = await self._execute_sticker(ctx, gateway, raw_item, sent_count, member_counts)
+                result = await self._execute_sticker(
+                    ctx,
+                    gateway,
+                    raw_item,
+                    sent_count,
+                    member_counts,
+                    member_ids,
+                )
                 results.append(result)
                 if result.get("ok"):
                     sent_count += 1
@@ -101,10 +109,39 @@ class SafetyPipeline:
                 await self._blocked("send_message", ctx.session.id, reason, raw_text, "send_message")
                 results.append({"ok": False, "action": str(raw_item.get("type", "")), "reason": reason})
                 continue
-            for text in normalize_reply_segments(raw_text):
+            action_type = str(raw_item.get("type", ""))
+            mention_ids: tuple[str, ...] = ()
+            if action_type == "send_group":
+                try:
+                    mention_ids = _parse_mention_ids(raw_item.get("mention_user_ids", ()))
+                except (TypeError, ValueError) as exc:
+                    reason = str(exc)
+                    await self._blocked(
+                        "send_group_message",
+                        ctx.session.id,
+                        reason,
+                        raw_text,
+                        "群消息 mention 参数不合法",
+                    )
+                    results.append({"ok": False, "action": action_type, "reason": reason})
+                    continue
+                if mention_ids:
+                    mention_ok, mention_reason = await self._check_mentions(
+                        ctx,
+                        gateway,
+                        str(raw_item.get("group_id", "")),
+                        mention_ids,
+                        member_counts,
+                        member_ids,
+                    )
+                    if not mention_ok:
+                        results.append({"ok": False, "action": action_type, "reason": mention_reason})
+                        continue
+            for segment_index, text in enumerate(normalize_reply_segments(raw_text)):
                 item = dict(raw_item)
                 item["message"] = text
                 action_type = str(item.get("type", ""))
+                segment_mentions = mention_ids if segment_index == 0 else ()
                 if action_type == "send_group":
                     scene_id = str(item["group_id"])
                     if sent_count >= self.config.max_sends_per_wake:
@@ -118,18 +155,21 @@ class SafetyPipeline:
                         continue
                     if scene_id not in member_counts and self.config.max_group_members > 0:
                         member_ok, member_reason = await self._check_group_members(
-                            ctx, gateway, scene_id, member_counts, text
+                            ctx, gateway, scene_id, member_counts, member_ids, text
                         )
                         if not member_ok:
                             results.append({"ok": False, "action": action_type, "reason": member_reason})
                             continue
+                    detail = f"群 {scene_id} 消息"
+                    if segment_mentions:
+                        detail += f" mentions={len(segment_mentions)}"
                     verdict = await self.check_outgoing(
                         ctx.session.id,
                         "group",
                         scene_id,
                         text,
                         action="send_group_message",
-                        detail=f"群 {scene_id} 消息",
+                        detail=detail,
                     )
                     if not verdict.allowed:
                         results.append({"ok": False, "action": action_type, "reason": verdict.reason})
@@ -141,6 +181,7 @@ class SafetyPipeline:
                             scene_id,
                             text,
                             str(reply_to) if reply_to is not None else None,
+                            segment_mentions,
                         )
                     except Exception as exc:  # noqa: BLE001 - gateway boundary; audit every send failure
                         await self.audit.record(
@@ -207,6 +248,7 @@ class SafetyPipeline:
         item: dict[str, Any],
         sent_count: int,
         member_counts: dict[str, int],
+        member_ids: dict[str, set[str]],
     ) -> dict[str, Any]:
         action = "sticker_send"
         if item.get("group_id") is not None:
@@ -230,6 +272,7 @@ class SafetyPipeline:
                 gateway,
                 scene_id,
                 member_counts,
+                member_ids,
                 f"[表情:{item.get('sticker_id', '')}]",
             )
             if not ok:
@@ -292,11 +335,18 @@ class SafetyPipeline:
         gateway: QQGateway,
         scene_id: str,
         member_counts: dict[str, int],
+        member_ids: dict[str, set[str]],
         text: str,
     ) -> tuple[bool, str]:
         if scene_id not in member_counts:
             try:
-                member_counts[scene_id] = len(await gateway.get_group_members(scene_id))
+                members = await gateway.get_group_members(scene_id)
+                member_counts[scene_id] = len(members)
+                member_ids[scene_id] = {
+                    str(member.get("user_id"))
+                    for member in members
+                    if member.get("user_id") is not None
+                }
             except Exception as exc:  # noqa: BLE001 - member guard fails closed
                 reason = f"成员数校验失败: {exc}"
                 await self._blocked(
@@ -307,7 +357,7 @@ class SafetyPipeline:
                     f"群 {scene_id} 消息",
                 )
                 return False, reason
-        if member_counts.get(scene_id, 0) > self.config.max_group_members:
+        if self.config.max_group_members > 0 and member_counts.get(scene_id, 0) > self.config.max_group_members:
             reason = f"群成员数超过上限 {self.config.max_group_members}"
             await self._blocked(
                 "send_group_message",
@@ -315,6 +365,40 @@ class SafetyPipeline:
                 reason,
                 text,
                 f"群 {scene_id} 消息",
+            )
+            return False, reason
+        return True, ""
+
+    async def _check_mentions(
+        self,
+        ctx: ToolContext,
+        gateway: QQGateway,
+        scene_id: str,
+        mention_user_ids: tuple[str, ...],
+        member_counts: dict[str, int],
+        member_ids: dict[str, set[str]],
+    ) -> tuple[bool, str]:
+        if not mention_user_ids:
+            return True, ""
+        member_ok, member_reason = await self._check_group_members(
+            ctx,
+            gateway,
+            scene_id,
+            member_counts,
+            member_ids,
+            f"mentions={len(mention_user_ids)}",
+        )
+        if not member_ok:
+            return False, member_reason
+        known_ids = member_ids.get(scene_id, set())
+        if any(user_id not in known_ids for user_id in mention_user_ids):
+            reason = "mention 目标不在当前群成员列表中"
+            await self._blocked(
+                "send_group_message",
+                ctx.session.id,
+                reason,
+                "",
+                f"群 {scene_id} mentions={len(mention_user_ids)}",
             )
             return False, reason
         return True, ""
@@ -344,3 +428,25 @@ class SafetyPipeline:
 
 def _daily_day() -> str:
     return datetime.now(UTC).astimezone().strftime("%Y-%m-%d")
+
+
+def _parse_mention_ids(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise TypeError("mentionUserIds 必须是数组")
+    if len(value) > 5:
+        raise ValueError("单条消息最多 @ 5 人")
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise TypeError("mentionUserIds 必须是数字 QQ 号")
+        user_id = item.strip()
+        if not user_id:
+            raise ValueError("mentionUserIds 不能包含空值")
+        if not user_id.isdigit():
+            raise ValueError("mentionUserIds 必须是数字 QQ 号")
+        if user_id in cleaned:
+            raise ValueError("mentionUserIds 不能重复")
+        cleaned.append(user_id)
+    return tuple(cleaned)

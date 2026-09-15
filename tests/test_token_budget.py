@@ -34,6 +34,14 @@ def test_tool_schemas_can_be_omitted_for_final_reply_and_keep_order() -> None:
     assert [_schema_function(item)["name"] for item in first] == [_schema_function(item)["name"] for item in second]
     assert build_tool_schemas(allow_tools=False) == []
     assert "sticker_send" not in [_schema_function(item)["name"] for item in first]
+    group_send = next(
+        item for item in first if _schema_function(item)["name"] == "qq_send_group_message"
+    )
+    group_parameters = cast(dict[str, Any], _schema_function(group_send)["parameters"])
+    group_properties = cast(dict[str, Any], group_parameters["properties"])
+    mention_schema = cast(dict[str, Any], group_properties["mentionUserIds"])
+    assert mention_schema["type"] == "array"
+    assert mention_schema["maxItems"] == 5
     assert "sticker_send" not in [
         _schema_function(item)["name"]
         for item in build_tool_schemas(sticker_enabled=True)

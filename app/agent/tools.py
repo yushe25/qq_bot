@@ -14,9 +14,27 @@ from app.safety.whitelist import Whitelist
 
 
 class SendGroupArgs(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, strict=True)
     group_id: str = Field(alias="groupId")
     message: str = Field(min_length=1, max_length=500)
+    mention_user_ids: list[str] = Field(default_factory=list, alias="mentionUserIds")
+
+    @field_validator("mention_user_ids")
+    @classmethod
+    def validate_mention_user_ids(cls, value: list[str]) -> list[str]:
+        if len(value) > 5:
+            raise ValueError("单条消息最多 @ 5 人")
+        cleaned: list[str] = []
+        for item in value:
+            user_id = item.strip()
+            if not user_id:
+                raise ValueError("mentionUserIds 不能包含空值")
+            if not user_id.isdigit():
+                raise ValueError("mentionUserIds 必须是数字 QQ 号")
+            if user_id in cleaned:
+                raise ValueError("mentionUserIds 不能重复")
+            cleaned.append(user_id)
+        return cleaned
 
 
 class ReplyArgs(BaseModel):
@@ -108,7 +126,14 @@ async def _dispatch(ctx: ToolContext, call: ToolCall) -> ToolResult:
             return ToolResult(success=False, message="群不在白名单中")
         if len(ctx.outbox) >= ctx.config.safety.max_sends_per_wake:
             return ToolResult(success=False, message=f"单次唤醒最多发送 {ctx.config.safety.max_sends_per_wake} 条")
-        ctx.outbox.append({"type": "send_group", "group_id": args.group_id, "message": args.message})
+        ctx.outbox.append(
+            {
+                "type": "send_group",
+                "group_id": args.group_id,
+                "message": args.message,
+                "mention_user_ids": args.mention_user_ids,
+            }
+        )
         return ToolResult(success=True, message="已排队")
     if name == "qq_reply":
         args = ReplyArgs.model_validate(call.arguments)

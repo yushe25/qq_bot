@@ -36,12 +36,18 @@ def build_tool_schemas(
             "type": "function",
             "function": {
                 "name": "qq_send_group_message",
-                "description": "向当前群发送一条纯文本消息。groupId 必须是当前会话群号。",
+                "description": "向当前群发送一条消息，可安全 @ 当前群成员。groupId 必须是当前会话群号。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "groupId": {"type": "string"},
                         "message": {"type": "string", "maxLength": 500},
+                        "mentionUserIds": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "maxItems": 5,
+                            "description": "需要明确 @ 的群成员 QQ 号，只能来自最近消息或成员列表",
+                        },
                     },
                     "required": ["groupId", "message"],
                 },

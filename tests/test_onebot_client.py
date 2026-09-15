@@ -79,6 +79,51 @@ async def test_post_returns_data_on_success(monkeypatch: pytest.MonkeyPatch) -> 
     assert result["message_id"] == 42
 
 
+async def test_send_group_message_posts_reply_at_text_without_auto_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"status": "ok", "retcode": 0, "data": {"message_id": 42}})
+
+    _patch_http_client(monkeypatch, httpx.MockTransport(handler))
+    gateway = OneBotV11Gateway(QQConfig())
+
+    await gateway.send_group_message(
+        "100000",
+        "文件在这里",
+        reply_to_message_id="88",
+        mention_user_ids=["10001", "10002"],
+    )
+
+    assert captured["body"] == {
+        "group_id": 100000,
+        "message": [
+            {"type": "reply", "data": {"id": "88"}},
+            {"type": "at", "data": {"qq": "10001"}},
+            {"type": "at", "data": {"qq": "10002"}},
+            {"type": "text", "data": {"text": "文件在这里"}},
+        ],
+    }
+
+
+async def test_send_plain_group_message_keeps_auto_escape(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"status": "ok", "retcode": 0, "data": {"message_id": 43}})
+
+    _patch_http_client(monkeypatch, httpx.MockTransport(handler))
+    gateway = OneBotV11Gateway(QQConfig())
+
+    await gateway.send_group_message("100000", "hello")
+
+    assert captured["body"] == {"group_id": 100000, "message": "hello", "auto_escape": True}
+
+
 async def test_send_group_sticker_posts_image_segment(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     file_path = tmp_path / "sticker.gif"
     captured: dict[str, Any] = {}

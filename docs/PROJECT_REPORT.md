@@ -88,16 +88,16 @@ console              FastAPI API + WS 实时流 + 单页控制台
 
 ### P0 已修复（2026-09-08）
 
-1. **限流 defer 循环**（`app/runtime/scheduler.py:224`）
+1. **限流 defer 循环**（`app/runtime/scheduler.py`）
    唤醒限流达到窗口上限后固定每 30 秒 defer 重试，而限流窗口最长 1 小时才释放。已修复：`RateLimiter.next_available_at()` 返回综合全局分钟、全局小时、会话分钟、会话小时四个队列的下一次可用时间，`_defer` 按该时间对齐，不再每 30 秒刷日志/写库。
 
-2. **工具结果 300 字符截断**（`app/runtime/orchestrator.py:224`）
+2. **工具结果 300 字符截断**（`app/runtime/orchestrator.py`）
    `_tool_result_text` 把 data JSON 截到 300 字符，历史/成员数据给模型的是残缺 JSON。已修复：`qq_get_group_history` 输出 `[message_id] 昵称(user_id): 文本` 逐行摘要，`qq_get_members` 输出 `昵称(user_id) [role]`，通用工具 JSON 上限现由 `tokenBudget.toolResultChars` 控制并默认截到 1600 字符。
 
-3. **限流 defer 丢失唤醒上下文**（`app/runtime/scheduler.py:255`）
+3. **限流 defer 丢失唤醒上下文**（`app/runtime/scheduler.py`）
    @ 提及被 defer 后重试时变成无事件的“定时唤醒”。已修复：Scheduler 增加 `_pending_wakes`，全局并发/冷却/限流三处 defer 均保存原 `WakeInput`，到期 tick 优先消费 pending 唤醒，保留触发类别与 reason。
 
-4. **控制台 token 模式不可用**（`app/console/router.py:139`）
+4. **控制台 token 模式不可用**（`app/console/router.py`）
    设置 token 后页面与 API 均要求 Bearer header，浏览器无法直接打开。已修复：`GET /` 与 REST API 支持 `?token=` 或 `Authorization: Bearer`；控制台页读取 URL/sessionStorage 中的 token，fetch 统一附加 Bearer，WS 连接带 `?token=`，并加 `no-referrer` 防泄漏。
 
 ### P1 功能缺口

@@ -816,6 +816,61 @@ class StateStore:
         row = rows[0] if rows else {"item_count": 0, "byte_size": 0}
         return {"item_count": int(row["item_count"]), "byte_size": int(row["byte_size"])}
 
+    async def insert_sticker_context_observation(
+        self,
+        *,
+        media_id: int,
+        group_id: str,
+        source_message_id: str,
+        sender_id: str,
+        observed_at: float,
+        before_context: list[dict[str, Any]],
+        source: str,
+    ) -> int:
+        async with self._lock:
+            conn = self._connection()
+            return await asyncio.to_thread(
+                _insert_sticker_context_sync,
+                conn,
+                media_id,
+                group_id,
+                source_message_id,
+                sender_id,
+                observed_at,
+                _json(before_context),
+                source,
+            )
+
+    async def update_sticker_context_after(
+        self,
+        observation_id: int,
+        after_context: list[dict[str, Any]],
+        situation_tags: list[str],
+    ) -> None:
+        await self._execute(
+            """
+            UPDATE sticker_context_observations
+            SET after_context_json = ?, situation_tags_json = ?
+            WHERE id = ?
+            """,
+            (_json(after_context), _json(situation_tags), observation_id),
+        )
+
+    async def list_sticker_context_observations(
+        self,
+        group_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        if group_id:
+            return await self._query(
+                "SELECT * FROM sticker_context_observations WHERE group_id = ? ORDER BY observed_at DESC LIMIT ?",
+                (group_id, limit),
+            )
+        return await self._query(
+            "SELECT * FROM sticker_context_observations ORDER BY observed_at DESC LIMIT ?",
+            (limit,),
+        )
+
     async def get_daily_send_count(self, session_id: str, day: str) -> int:
         rows = await self._query(
             "SELECT count FROM daily_send_counts WHERE session_id = ? AND day = ?",
@@ -1014,6 +1069,56 @@ def _upsert_inbound_media_sync(
         if row is None:
             raise RuntimeError("inbound_media upsert did not return an id")
         return int(row["id"])
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+def _insert_sticker_context_sync(
+    conn: sqlite3.Connection,
+    media_id: int,
+    group_id: str,
+    source_message_id: str,
+    sender_id: str,
+    observed_at: float,
+    before_context_json: str,
+    source: str,
+) -> int:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        cursor = conn.execute(
+            """
+            INSERT INTO sticker_context_observations (
+                media_id, group_id, source_message_id, sender_id, observed_at,
+                before_context_json, after_context_json, situation_tags_json, source
+            ) VALUES (?, ?, ?, ?, ?, ?, '[]', '[]', ?)
+            ON CONFLICT(source_message_id, media_id) DO UPDATE SET
+                group_id = excluded.group_id,
+                sender_id = excluded.sender_id,
+                observed_at = excluded.observed_at,
+                before_context_json = excluded.before_context_json,
+                source = excluded.source
+            """,
+            (
+                media_id,
+                group_id,
+                source_message_id,
+                sender_id,
+                observed_at,
+                before_context_json,
+                source,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM sticker_context_observations WHERE source_message_id = ? AND media_id = ?",
+            (source_message_id, media_id),
+        ).fetchone()
+        conn.execute("COMMIT")
+        if row is not None:
+            return int(row["id"])
+        if cursor.lastrowid is not None:
+            return int(cursor.lastrowid)
+        raise RuntimeError("context observation insert did not return an id")
     except Exception:
         conn.execute("ROLLBACK")
         raise

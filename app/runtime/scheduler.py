@@ -25,6 +25,7 @@ from app.runtime.schedule import (
     window_phase,
 )
 from app.runtime.session_manager import SessionManager
+from app.runtime.sticker_context import StickerContextObserver
 from app.safety.rate_limiter import RateLimiter
 from app.safety.whitelist import Whitelist
 from app.storage.db import StateStore
@@ -82,6 +83,7 @@ class Scheduler:
         learning: LearningRunner | None = None,
         memory: MemoryStore | None = None,
         inbound_ingest: InboundIngest | None = None,
+        sticker_context: StickerContextObserver | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -93,6 +95,7 @@ class Scheduler:
         self.learning = learning
         self.memory = memory
         self.inbound_ingest = inbound_ingest
+        self.sticker_context = sticker_context
         self.dedupe = MessageDedupe()
         self._inbox: dict[str, list[NormalizedEvent]] = {}
         self._deadlines: dict[str, float] = {}
@@ -134,11 +137,17 @@ class Scheduler:
         ):
             return
         self._collect_observation(event)
+        ingest_results = []
         if self.inbound_ingest is not None:
             try:
-                await self.inbound_ingest.handle_event(event)
+                ingest_results = await self.inbound_ingest.handle_event(event)
             except Exception:
                 logger.exception("inbound media ingest failed for %s", event.session_id)
+        if self.sticker_context is not None:
+            try:
+                await self.sticker_context.observe_event(event, ingest_results)
+            except Exception:
+                logger.exception("sticker context observation failed for %s", event.session_id)
         session = self.sessions.ensure_session(scene_type, scene_id)
         session.last_message_at = now_ms()
         batch = self._inbox.setdefault(session.id, [])

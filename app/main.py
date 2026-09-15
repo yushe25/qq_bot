@@ -30,6 +30,7 @@ from app.runtime.orchestrator import Orchestrator
 from app.runtime.safety_pipeline import SafetyPipeline
 from app.runtime.scheduler import Scheduler
 from app.runtime.session_manager import SessionManager
+from app.runtime.sticker_context import StickerContextObserver
 from app.safety.audit import AuditLog
 from app.safety.content_filter import ContentFilter
 from app.safety.instance_lock import InstanceLock, InstanceLockError
@@ -144,6 +145,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         audit=audit,
         promotion=promotion,
     )
+    sticker_context = StickerContextObserver(config.sticker.ingest, store)
     safety = SafetyPipeline(
         config.safety,
         whitelist,
@@ -176,6 +178,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         learning=learning,
         memory=memory,
         inbound_ingest=inbound_ingest,
+        sticker_context=sticker_context,
     )
     return AppRuntime(
         config=config,

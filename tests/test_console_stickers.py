@@ -80,6 +80,7 @@ async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> N
             headers=headers,
             json={"groupId": "100000", "name": "无语猫", "tags": ["无语"]},
         )
+        media = await store.get_inbound_media(media_id)
     finally:
         await store.close()
 
@@ -89,6 +90,27 @@ async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> N
     assert preview.content == _gif_bytes()
     assert update.status_code == 200
     assert approve.status_code == 200
+    assert media is not None
+    assert media["name"] == "无语猫"
+    assert str(media["local_path"]).startswith("images/")
+
+
+async def test_console_sticker_reject_updates_local_path(tmp_path: Path) -> None:
+    client, store, media_id = await _client(tmp_path)
+    try:
+        reject = client.post(
+            f"/api/stickers/{media_id}/reject",
+            headers={"authorization": "Bearer secret"},
+            json={"groupId": "100000", "reason": "test"},
+        )
+        media = await store.get_inbound_media(media_id)
+    finally:
+        await store.close()
+
+    assert reject.status_code == 200
+    assert media is not None
+    assert media["status"] == "rejected"
+    assert str(media["local_path"]).startswith("rejected/")
 
 
 async def test_console_sticker_endpoints_require_auth(tmp_path: Path) -> None:

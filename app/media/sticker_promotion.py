@@ -111,6 +111,15 @@ class StickerPromotionService:
             await self._audit("sticker_promotion_rejected", "path escape", group_id)
             return "pending_review"
         values = _metadata_values(media, metadata or {})
+        await self.store.update_inbound_media_metadata(
+            media_id,
+            name=str(values["name"]),
+            description=str(values["description"]),
+            tags=_string_values(values["tags"]),
+            moods=_string_values(values["moods"]),
+            scenes=_string_values(values["scenes"]),
+            avoid_scenes=_string_values(values["avoid_scenes"]),
+        )
 
         target = (self.library_dir / "images" / f"{media['sha256']}{source.suffix.lower()}").resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -146,6 +155,7 @@ class StickerPromotionService:
         await self.store.update_inbound_media_status(
             media_id,
             "approved",
+            local_path=relative_file,
             vision_provider=self.auto_tag.provider,
             auto_approved=auto_approved,
         )
@@ -201,4 +211,8 @@ def _load_json_list(value: object) -> list[str]:
 
 
 def _coerce_list(value: object) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def _string_values(value: object) -> list[str]:
     return [str(item) for item in value] if isinstance(value, list) else []

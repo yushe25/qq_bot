@@ -73,9 +73,9 @@ class StickerLibrary:
     def available(self) -> bool:
         return (
             self.enabled
-            and bool(self.allowed_ids)
             and self.error is None
             and bool(self._entries)
+            and (bool(self.allowed_ids) or self._has_group_capture())
         )
 
     def list_ids(self) -> list[str]:
@@ -85,63 +85,31 @@ class StickerLibrary:
         return [sticker_id for sticker_id in self._entries if sticker_id in allowed]
 
     def resolve(self, sticker_id: str) -> StickerFile | None:
-        if (
-            not self.enabled
-            or not self.allowed_ids
-            or self.error
-            or sticker_id not in self._entries
-            or sticker_id not in set(self.allowed_ids)
-        ):
+        entry = self._entries.get(sticker_id)
+        if not self.enabled or self.error or entry is None or sticker_id not in set(self.allowed_ids):
             return None
-        entry = self._entries[sticker_id]
-        if not entry.approved:
-            return None
-        target = (self.library_dir / entry.file).resolve()
-        try:
-            target.relative_to(self.library_dir)
-        except ValueError:
-            return None
-        if not target.is_file():
-            return None
-        ok, _ = self.media_guard.check_file(target)
-        if not ok:
-            return None
-        return StickerFile(
-            sticker_id=sticker_id,
-            name=entry.name or sticker_id,
-            path=target,
-            tags=tuple(entry.tags),
-            description=entry.description,
-            moods=tuple(entry.moods),
-            scenes=tuple(entry.scenes),
-            avoid_scenes=tuple(entry.avoid_scenes),
-        )
+        return self._resolve_entry(entry)
 
     def catalog(self) -> tuple[StickerCatalogEntry, ...]:
         entries: list[StickerCatalogEntry] = []
         for sticker_id in self.list_ids():
-            sticker = self.resolve(sticker_id)
-            if sticker is None:
-                continue
-            entries.append(
-                StickerCatalogEntry(
-                    sticker_id=sticker.sticker_id,
-                    name=sticker.name,
-                    description=sticker.description,
-                    tags=sticker.tags,
-                    moods=sticker.moods,
-                    scenes=sticker.scenes,
-                    avoid_scenes=sticker.avoid_scenes,
-                )
-            )
+            entry = self._entries.get(sticker_id)
+            item = self._catalog_entry(entry)
+            if item is not None:
+                entries.append(item)
         return tuple(entries)
 
     def catalog_for_scene(self, scene_id: str) -> tuple[StickerCatalogEntry, ...]:
-        return tuple(
-            entry
-            for entry in self.catalog()
-            if self._scene_allowed(self._entries.get(entry.sticker_id), scene_id)
-        )
+        if not self.enabled or self.error:
+            return ()
+        entries: list[StickerCatalogEntry] = []
+        for sticker_id, entry in self._entries.items():
+            if not self._allowed_for_scene(sticker_id, entry, scene_id):
+                continue
+            item = self._catalog_entry(entry)
+            if item is not None:
+                entries.append(item)
+        return tuple(entries)
 
     def catalog_text_for_scene(
         self,
@@ -157,9 +125,10 @@ class StickerLibrary:
 
     def resolve_for_scene(self, sticker_id: str, scene_id: str) -> StickerFile | None:
         entry = self._entries.get(sticker_id)
-        if not self._scene_allowed(entry, scene_id):
+        if not self.enabled or self.error or not self._allowed_for_scene(sticker_id, entry, scene_id):
             return None
-        return self.resolve(sticker_id)
+        assert entry is not None
+        return self._resolve_entry(entry)
 
     def catalog_text(self, max_chars: int = 4000) -> str:
         return self._catalog_text(self.catalog(), max_chars=max_chars)
@@ -222,7 +191,62 @@ class StickerLibrary:
         if self.store is not None:
             await self.store.increment_sticker_usage(sticker_id)
 
-    def _scene_allowed(self, entry: StickerManifestEntry | None, scene_id: str) -> bool:
-        if entry is None or not self.same_group_only or not entry.scope_groups:
-            return True
-        return scene_id in entry.scope_groups
+    def _has_group_capture(self) -> bool:
+        return any(
+            entry.approved and entry.source == "group_capture"
+            for entry in self._entries.values()
+        )
+
+    def _allowed_for_scene(
+        self,
+        sticker_id: str,
+        entry: StickerManifestEntry | None,
+        scene_id: str,
+    ) -> bool:
+        if entry is None or not entry.approved:
+            return False
+        if entry.source == "group_capture":
+            if not self.same_group_only:
+                return True
+            return bool(entry.scope_groups) and scene_id in entry.scope_groups
+        return sticker_id in set(self.allowed_ids)
+
+    def _resolve_entry(self, entry: StickerManifestEntry) -> StickerFile | None:
+        if not entry.approved:
+            return None
+        target = (self.library_dir / entry.file).resolve()
+        try:
+            target.relative_to(self.library_dir)
+        except ValueError:
+            return None
+        if not target.is_file():
+            return None
+        ok, _ = self.media_guard.check_file(target)
+        if not ok:
+            return None
+        return StickerFile(
+            sticker_id=entry.id,
+            name=entry.name or entry.id,
+            path=target,
+            tags=tuple(entry.tags),
+            description=entry.description,
+            moods=tuple(entry.moods),
+            scenes=tuple(entry.scenes),
+            avoid_scenes=tuple(entry.avoid_scenes),
+        )
+
+    def _catalog_entry(self, entry: StickerManifestEntry | None) -> StickerCatalogEntry | None:
+        if entry is None:
+            return None
+        sticker = self._resolve_entry(entry)
+        if sticker is None:
+            return None
+        return StickerCatalogEntry(
+            sticker_id=sticker.sticker_id,
+            name=sticker.name,
+            description=sticker.description,
+            tags=sticker.tags,
+            moods=sticker.moods,
+            scenes=sticker.scenes,
+            avoid_scenes=sticker.avoid_scenes,
+        )

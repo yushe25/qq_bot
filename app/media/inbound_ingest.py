@@ -62,11 +62,7 @@ class InboundIngest:
         stats = await self.store.inbound_media_group_stats(group_id)
         results: list[IngestResult] = []
         for segment in image_segments:
-            if stats["item_count"] >= group_config.max_items or stats["byte_size"] >= group_config.max_bytes:
-                await self._audit("sticker_ingest_quota", f"group={group_id}", "blocked", group_id)
-                results.append(IngestResult(False, "quota reached"))
-                continue
-            result = await self._ingest_segment(event, group_id, group_config, segment)
+            result = await self._ingest_segment(event, group_id, group_config, segment, stats)
             results.append(result)
             if result.accepted:
                 stats = await self.store.inbound_media_group_stats(group_id)
@@ -78,6 +74,7 @@ class InboundIngest:
         group_id: str,
         group_config: StickerIngestGroupConfig,
         segment: object,
+        stats: dict[str, int],
     ) -> IngestResult:
         try:
             payload = await self.gateway.fetch_image_segment(segment, max_bytes=_MAX_IMAGE_BYTES)  # type: ignore[arg-type]
@@ -99,6 +96,9 @@ class InboundIngest:
         if existing is not None:
             await self.store.touch_inbound_media_group(int(existing["id"]), group_id, event.timestamp)
             return IngestResult(True, "duplicate", int(existing["id"]), digest)
+        if stats["item_count"] >= group_config.max_items or stats["byte_size"] >= group_config.max_bytes:
+            await self._audit("sticker_ingest_quota", f"group={group_id}", "blocked", group_id)
+            return IngestResult(False, "quota reached")
 
         relative_path = Path("inbox") / f"{digest}{extension}"
         target = (self.library_dir / relative_path).resolve()

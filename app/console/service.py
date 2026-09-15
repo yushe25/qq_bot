@@ -136,10 +136,11 @@ class ConsoleService:
         media = await self.store.get_inbound_media(media_id)
         if media is None:
             return False
-        await self._move_to_rejected(media)
+        local_path = await self._move_to_rejected(media)
         await self.store.update_inbound_media_status(
             media_id,
             "rejected",
+            local_path=local_path,
             reviewed_by="console",
             reject_reason=reason[:200],
         )
@@ -187,18 +188,21 @@ class ConsoleService:
         rows = await self.store.list_sticker_context_for_media(media_id)
         return [_context_item(row) for row in rows]
 
-    async def _move_to_rejected(self, media: dict[str, object]) -> None:
+    async def _move_to_rejected(self, media: dict[str, object]) -> str | None:
         if self.sticker_dir is None:
-            return
+            return None
         source = (self.sticker_dir / str(media["local_path"])).resolve()
         try:
             source.relative_to(self.sticker_dir)
         except ValueError:
-            return
+            return None
         target = self.sticker_dir / "rejected" / source.name
         target.parent.mkdir(parents=True, exist_ok=True)
         if source.is_file() and not target.exists():
             shutil.move(str(source), str(target))
+        if not target.is_file():
+            return None
+        return target.relative_to(self.sticker_dir).as_posix()
 
     def _publish(self, event_type: str, payload: dict[str, object]) -> None:
         if self.bus:

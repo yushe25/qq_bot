@@ -735,6 +735,7 @@ class StateStore:
         media_id: int,
         status: str,
         *,
+        local_path: str | None = None,
         vision_provider: str | None = None,
         tag_confidence: float | None = None,
         auto_approved: bool | None = None,
@@ -745,6 +746,7 @@ class StateStore:
             """
             UPDATE inbound_media SET
                 status = ?,
+                local_path = COALESCE(?, local_path),
                 vision_provider = COALESCE(?, vision_provider),
                 tag_confidence = COALESCE(?, tag_confidence),
                 auto_approved = COALESCE(?, auto_approved),
@@ -755,6 +757,7 @@ class StateStore:
             """,
             (
                 status,
+                local_path,
                 vision_provider,
                 tag_confidence,
                 int(auto_approved) if auto_approved is not None else None,

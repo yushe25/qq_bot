@@ -235,10 +235,10 @@ def _clean_list(
     field: str,
     content_filter: ContentFilter,
 ) -> list[str]:
-    if len(values) > max_items:
-        raise StickerTagError(f"{field} 数量超限")
     cleaned: list[str] = []
     for value in values:
+        if len(cleaned) >= max_items:
+            break
         text = _clean_text(value)
         if not text:
             raise StickerTagError(f"{field} 包含空字符串")

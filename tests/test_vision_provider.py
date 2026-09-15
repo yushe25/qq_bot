@@ -58,6 +58,20 @@ def _write_gif(path: Path) -> None:
     path.write_bytes(_gif_bytes())
 
 
+def _write_webp(path: Path) -> None:
+    payload = (
+        b"RIFF"
+        + (22).to_bytes(4, "little")
+        + b"WEBP"
+        + b"VP8X"
+        + (10).to_bytes(4, "little")
+        + b"\x00" * 4
+        + (0).to_bytes(3, "little")
+        + (0).to_bytes(3, "little")
+    )
+    path.write_bytes(payload)
+
+
 def _provider_config(**overrides: Any) -> StickerAutoTagProviderConfig:
     values: dict[str, Any] = {
         "base_url": "https://vision.example/v1",
@@ -104,6 +118,27 @@ async def test_vision_provider_rejects_invalid_local_image(tmp_path: Path) -> No
 
     with pytest.raises(ValueError, match="vision image rejected"):
         await provider.describe(path, prompt="请描述图片")
+
+
+async def test_vision_provider_supports_webp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "pilot.webp"
+    _write_webp(path)
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+
+    _patch_http_client(monkeypatch, httpx.MockTransport(handler))
+    provider = OpenAICompatibleVisionProvider("vision-main", _provider_config(), "test-key")
+
+    assert await provider.describe(path, prompt="请描述图片") == "ok"
+    assert captured["body"]["messages"][0]["content"][1]["image_url"]["url"].startswith(
+        "data:image/webp;base64,"
+    )
 
 
 async def test_vision_router_falls_back_only_for_transient_errors() -> None:

@@ -349,6 +349,31 @@ def test_sticker_library_isolates_group_captured_assets(tmp_path: Path) -> None:
     assert library.resolve_for_scene("auto-01", "200000") is None
 
 
+def test_sticker_library_allows_group_capture_without_static_allowlist(tmp_path: Path) -> None:
+    root = tmp_path / "stickers"
+    _write_manifest(
+        root / "manifest.yaml",
+        [
+            {
+                "id": "auto-01",
+                "name": "无语猫",
+                "file": "images/mock-01.gif",
+                "approved": True,
+                "source": "group_capture",
+                "source_group_ids": ["100000"],
+                "scope_groups": ["100000"],
+            }
+        ],
+    )
+    _write_gif(root / "images" / "mock-01.gif")
+    library = init_library(root, allowed_ids=("pilot-01",))
+
+    assert library.list_ids() == []
+    assert [entry.sticker_id for entry in library.catalog_for_scene("100000")] == ["auto-01"]
+    assert library.catalog_for_scene("200000") == ()
+    assert library.resolve_for_scene("auto-01", "100000") is not None
+
+
 def test_sticker_library_legacy_assets_remain_global(tmp_path: Path) -> None:
     library = _library(
         tmp_path,

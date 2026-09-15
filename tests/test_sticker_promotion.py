@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import struct
 from pathlib import Path
 
@@ -92,6 +93,9 @@ async def test_promotion_auto_approves_high_confidence_sticker(tmp_path: Path) -
     assert status == "approved"
     assert tagger.calls == 1
     assert media is not None and media["status"] == "approved" and media["auto_approved"] == 1
+    assert media["local_path"] == entries[0].file
+    assert media["name"] == "无语猫"
+    assert json.loads(media["tags_json"]) == ["无语"]
     assert entries[0].source == "group_capture"
     assert entries[0].scope_groups == ["100000"]
     assert (tmp_path / "stickers" / entries[0].file).is_file()

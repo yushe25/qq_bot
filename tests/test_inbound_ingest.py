@@ -16,6 +16,11 @@ def _gif_bytes(width: int = 1, height: int = 1) -> bytes:
     return b"GIF89a" + struct.pack("<HH", width, height) + b"\x00\x00\x00"
 
 
+def _padded_gif(fill: bytes, size: int) -> bytes:
+    payload = _gif_bytes()
+    return payload + fill * (size - len(payload))
+
+
 def _event(group_id: str = "100000", event_id: str = "img-1", private: bool = False) -> NormalizedEvent:
     scene_type = "private" if private else "group"
     return NormalizedEvent(
@@ -115,3 +120,40 @@ async def test_inbound_ingest_enforces_group_item_quota(tmp_path: Path) -> None:
     assert first[0].accepted is True
     assert second[0].accepted is False
     assert second[0].reason == "quota reached"
+
+
+async def test_inbound_ingest_enforces_group_byte_quota(tmp_path: Path) -> None:
+    gateway = NullGateway(
+        image_payloads={
+            "img-1": _padded_gif(b"a", 1000),
+            "img-2": _padded_gif(b"b", 1000),
+        }
+    )
+    ingest, store = await _tagger(tmp_path, gateway, _config())
+    ingest.config.groups["100000"].max_bytes = 900
+    try:
+        first = await ingest.handle_event(_event(event_id="img-1"))
+        second = await ingest.handle_event(_event(event_id="img-2"))
+    finally:
+        await store.close()
+
+    assert first[0].accepted is True
+    assert second[0].accepted is False
+    assert second[0].reason == "quota reached"
+
+
+async def test_inbound_ingest_records_duplicate_when_item_quota_reached(tmp_path: Path) -> None:
+    payload = _gif_bytes()
+    gateway = NullGateway(image_payloads={"img-1": payload, "img-2": payload})
+    ingest, store = await _tagger(tmp_path, gateway, _config(max_items=1))
+    try:
+        first = await ingest.handle_event(_event(event_id="img-1"))
+        second = await ingest.handle_event(_event(event_id="img-2"))
+        groups = await store.get_inbound_media_groups(int(first[0].media_id or 0))
+    finally:
+        await store.close()
+
+    assert first[0].accepted is True
+    assert second[0].accepted is True
+    assert second[0].reason == "duplicate"
+    assert groups[0]["seen_count"] == 2

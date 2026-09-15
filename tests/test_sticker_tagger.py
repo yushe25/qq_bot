@@ -111,7 +111,6 @@ async def test_tag_one_writes_semantic_metadata_and_preserves_approval(tmp_path:
         "not json",
         _draft(name="x" * 81),
         _draft(description="x" * 31),
-        _draft(tags=[f"tag-{index}" for index in range(4)]),
         _draft(description="[CQ:image,file=http://evil]"),
         _draft(description="联系 13800138000"),
     ],
@@ -127,6 +126,24 @@ async def test_tag_one_rejects_invalid_draft_without_overwriting(tmp_path: Path,
 
     assert manifest_path.read_text(encoding="utf-8") == before
     assert tagger.last_results[0].status == "failed"
+
+
+async def test_tag_one_truncates_excess_semantic_lists(tmp_path: Path) -> None:
+    library_dir = _setup(tmp_path, [_entry()])
+    raw = _draft(
+        tags=[f"tag-{index}" for index in range(4)],
+        moods=[f"mood-{index}" for index in range(4)],
+        scenes=[f"scene-{index}" for index in range(4)],
+        avoid_scenes=[f"avoid-{index}" for index in range(4)],
+    )
+    tagger = StickerTagger(library_dir, _config(), _SequenceVision([raw]))
+
+    result = await tagger.tag_one("pilot-01")
+
+    assert result.tags == ["tag-0", "tag-1", "tag-2"]
+    assert result.moods == ["mood-0", "mood-1", "mood-2"]
+    assert result.scenes == ["scene-0", "scene-1", "scene-2"]
+    assert result.avoid_scenes == ["avoid-0", "avoid-1", "avoid-2"]
 
 
 async def test_tag_one_skips_manual_and_unchanged_hash(tmp_path: Path) -> None:

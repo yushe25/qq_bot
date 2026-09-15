@@ -717,6 +717,45 @@ class StateStore:
         rows = await self._query("SELECT * FROM inbound_media WHERE sha256 = ?", (sha256,))
         return rows[0] if rows else None
 
+    async def get_inbound_media(self, media_id: int) -> dict[str, Any] | None:
+        rows = await self._query("SELECT * FROM inbound_media WHERE id = ?", (media_id,))
+        return rows[0] if rows else None
+
+    async def update_inbound_media_status(
+        self,
+        media_id: int,
+        status: str,
+        *,
+        vision_provider: str | None = None,
+        tag_confidence: float | None = None,
+        auto_approved: bool | None = None,
+        reviewed_by: str | None = None,
+        reject_reason: str | None = None,
+    ) -> None:
+        await self._execute(
+            """
+            UPDATE inbound_media SET
+                status = ?,
+                vision_provider = COALESCE(?, vision_provider),
+                tag_confidence = COALESCE(?, tag_confidence),
+                auto_approved = COALESCE(?, auto_approved),
+                reviewed_at = ?,
+                reviewed_by = COALESCE(?, reviewed_by),
+                reject_reason = COALESCE(?, reject_reason)
+            WHERE id = ?
+            """,
+            (
+                status,
+                vision_provider,
+                tag_confidence,
+                int(auto_approved) if auto_approved is not None else None,
+                now_ms(),
+                reviewed_by,
+                reject_reason,
+                media_id,
+            ),
+        )
+
     async def upsert_inbound_media(
         self,
         *,

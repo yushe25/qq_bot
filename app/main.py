@@ -12,12 +12,15 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.agent.providers.router import build_llm_provider
+from app.agent.providers.vision_openai_compatible import build_vision_provider
 from app.agent.sticker_library import StickerLibrary
+from app.agent.sticker_tagger import StickerTagger
 from app.config import AppConfig
 from app.console.router import build_console_router
 from app.console.service import ConsoleService
 from app.logging_setup import configure_logging
 from app.media.inbound_ingest import InboundIngest
+from app.media.sticker_promotion import StickerPromotionService
 from app.memory.store import MemoryStore
 from app.platform.gateway import NullGateway
 from app.platform.qq.onebot_client import OneBotV11Gateway
@@ -110,6 +113,28 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         store=store,
         same_group_only=config.sticker.ingest.same_group_only,
     )
+    promotion: StickerPromotionService | None = None
+    if (
+        config.sticker.ingest.enabled
+        and config.sticker.auto_tag.enabled
+        and any(group.vision_enabled for group in config.sticker.ingest.groups.values())
+    ):
+        try:
+            vision_provider = build_vision_provider(config.sticker.auto_tag)
+            tagger = StickerTagger(
+                config.sticker_dir,
+                config.sticker.auto_tag,
+                vision_provider,
+            )
+            promotion = StickerPromotionService(
+                config.sticker_dir,
+                auto_tag=config.sticker.auto_tag,
+                tagger=tagger,
+                store=store,
+                audit=audit,
+            )
+        except ValueError as exc:
+            logger.warning("sticker promotion disabled: %s", exc)
     inbound_ingest = InboundIngest(
         config.sticker_dir,
         config.sticker.ingest,
@@ -117,6 +142,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         gateway,
         store,
         audit=audit,
+        promotion=promotion,
     )
     safety = SafetyPipeline(
         config.safety,

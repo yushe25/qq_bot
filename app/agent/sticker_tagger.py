@@ -108,6 +108,15 @@ class StickerTagger:
         self.last_results = results
         return entries
 
+    async def draft_for_image(self, image_path: Path) -> StickerTagDraft:
+        path = Path(image_path)
+        ok, reason = self.media_guard.check_file(path)
+        if not ok:
+            raise StickerTagError(f"image rejected: {reason}")
+        raw = await self.provider.describe(path, prompt=_TAG_PROMPT)
+        draft = _parse_draft(raw)
+        return _clean_draft(draft, self.config, self.content_filter)
+
     async def _tag_one_locked(self, sticker_id: str, *, force: bool) -> StickerTagResult:
         try:
             entries = load_manifest(self.manifest_path)
@@ -162,36 +171,47 @@ def _apply_draft(
     config: StickerAutoTagConfig,
     content_filter: ContentFilter,
 ) -> StickerManifestEntry:
-    name = _clean_required_text(draft.name, _MAX_NAME_CHARS, "name", content_filter)
-    description = _clean_required_text(
-        draft.description,
-        config.max_description_chars,
-        "description",
-        content_filter,
-    )
-    tags = _clean_list(draft.tags, config.max_tags, "tags", content_filter)
-    moods = _clean_list(draft.moods, config.max_tags, "moods", content_filter)
-    scenes = _clean_list(draft.scenes, config.max_tags, "scenes", content_filter)
-    avoid_scenes = _clean_list(draft.avoid_scenes, config.max_tags, "avoid_scenes", content_filter)
+    cleaned = _clean_draft(draft, config, content_filter)
     payload = entry.model_dump(mode="python")
     payload.update(
         {
-            "name": name,
-            "description": description,
-            "tags": tags,
-            "moods": moods,
-            "scenes": scenes,
-            "avoid_scenes": avoid_scenes,
+            "name": cleaned.name,
+            "description": cleaned.description,
+            "tags": cleaned.tags,
+            "moods": cleaned.moods,
+            "scenes": cleaned.scenes,
+            "avoid_scenes": cleaned.avoid_scenes,
             "tag_source": "auto",
             "tagged_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "content_hash": content_hash,
-            "tag_confidence": draft.confidence,
+            "tag_confidence": cleaned.confidence,
         }
     )
     try:
         return StickerManifestEntry.model_validate(payload)
     except ValidationError as exc:
         raise StickerTagError(f"自动标注结果超过 manifest 上限: {exc}") from exc
+
+
+def _clean_draft(
+    draft: StickerTagDraft,
+    config: StickerAutoTagConfig,
+    content_filter: ContentFilter,
+) -> StickerTagDraft:
+    return StickerTagDraft(
+        name=_clean_required_text(draft.name, _MAX_NAME_CHARS, "name", content_filter),
+        description=_clean_required_text(
+            draft.description,
+            config.max_description_chars,
+            "description",
+            content_filter,
+        ),
+        tags=_clean_list(draft.tags, config.max_tags, "tags", content_filter),
+        moods=_clean_list(draft.moods, config.max_tags, "moods", content_filter),
+        scenes=_clean_list(draft.scenes, config.max_tags, "scenes", content_filter),
+        avoid_scenes=_clean_list(draft.avoid_scenes, config.max_tags, "avoid_scenes", content_filter),
+        confidence=draft.confidence,
+    )
 
 
 def _clean_required_text(

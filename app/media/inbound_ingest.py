@@ -5,8 +5,9 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.config import SafetyConfig, StickerIngestConfig
+from app.config import SafetyConfig, StickerIngestConfig, StickerIngestGroupConfig
 from app.domain.types import NormalizedEvent
+from app.media.sticker_promotion import StickerPromotionService
 from app.platform.gateway import QQGateway
 from app.safety.audit import AuditLog
 from app.safety.media_guard import MediaGuard
@@ -36,6 +37,7 @@ class InboundIngest:
         *,
         audit: AuditLog | None = None,
         media_guard: MediaGuard | None = None,
+        promotion: StickerPromotionService | None = None,
     ) -> None:
         self.library_dir = Path(library_dir).resolve()
         self.config = config
@@ -43,6 +45,7 @@ class InboundIngest:
         self.gateway = gateway
         self.store = store
         self.audit = audit
+        self.promotion = promotion
         self.media_guard = media_guard or MediaGuard(max_bytes=_MAX_IMAGE_BYTES, max_pixels=40_960_000)
         self.inbox_dir = self.library_dir / "inbox"
 
@@ -63,13 +66,19 @@ class InboundIngest:
                 await self._audit("sticker_ingest_quota", f"group={group_id}", "blocked", group_id)
                 results.append(IngestResult(False, "quota reached"))
                 continue
-            result = await self._ingest_segment(event, group_id, segment)
+            result = await self._ingest_segment(event, group_id, group_config, segment)
             results.append(result)
             if result.accepted:
                 stats = await self.store.inbound_media_group_stats(group_id)
         return results
 
-    async def _ingest_segment(self, event: NormalizedEvent, group_id: str, segment: object) -> IngestResult:
+    async def _ingest_segment(
+        self,
+        event: NormalizedEvent,
+        group_id: str,
+        group_config: StickerIngestGroupConfig,
+        segment: object,
+    ) -> IngestResult:
         try:
             payload = await self.gateway.fetch_image_segment(segment, max_bytes=_MAX_IMAGE_BYTES)  # type: ignore[arg-type]
         except Exception as exc:  # noqa: BLE001 - media boundary; never break chat ingestion
@@ -112,8 +121,11 @@ class InboundIngest:
             first_seen_at=event.timestamp,
         )
         await self.store.touch_inbound_media_group(media_id, group_id, event.timestamp)
-        await self._audit("sticker_ingest_saved", f"group={group_id} bytes={len(payload)}", "pending_review", group_id)
-        return IngestResult(True, "pending_review", media_id, digest)
+        status = "pending_review"
+        if self.promotion is not None:
+            status = await self.promotion.promote(media_id, group_id, group_config)
+        await self._audit("sticker_ingest_saved", f"group={group_id} bytes={len(payload)}", status, group_id)
+        return IngestResult(True, status, media_id, digest)
 
     async def _audit(self, action: str, detail: str, result: str, session_id: str) -> None:
         if self.audit is not None:

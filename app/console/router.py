@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel, Field
 
 from app.config import ConsoleConfig
 
@@ -27,6 +27,36 @@ class _WsTicket:
 
 class WakeBody(BaseModel):
     reason: str = "控制台强制唤醒"
+
+
+class StickerApproveBody(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    group_id: str = Field(alias="groupId")
+    name: str = ""
+    description: str = ""
+    tags: list[str] = []
+    moods: list[str] = []
+    scenes: list[str] = []
+    avoid_scenes: list[str] = Field(default_factory=list, alias="avoidScenes")
+
+
+class StickerRejectBody(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    group_id: str = Field(alias="groupId")
+    reason: str = ""
+
+
+class StickerMetadataBody(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    name: str = ""
+    description: str = ""
+    tags: list[str] = []
+    moods: list[str] = []
+    scenes: list[str] = []
+    avoid_scenes: list[str] = Field(default_factory=list, alias="avoidScenes")
 
 
 def build_console_router(config: ConsoleConfig) -> APIRouter:
@@ -161,6 +191,60 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
     ) -> dict[str, Any]:
         runtime = _runtime(request)
         return {"items": await runtime.store.list_wake_logs(session_id=session_id, limit=limit)}
+
+    @router.get("/api/stickers/review", dependencies=[Depends(require_auth)])
+    async def sticker_review(
+        request: Request,
+        group_id: str = Query(..., alias="groupId"),
+    ) -> dict[str, Any]:
+        runtime = _runtime(request)
+        return {"items": await runtime.console.list_sticker_review(group_id)}
+
+    @router.get("/api/stickers/{media_id}/preview", dependencies=[Depends(require_auth)])
+    async def sticker_preview(request: Request, media_id: int) -> FileResponse:
+        runtime = _runtime(request)
+        path = await runtime.console.sticker_preview_path(media_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="sticker not found")
+        return FileResponse(path)
+
+    @router.post("/api/stickers/{media_id}/approve", dependencies=[Depends(require_auth)])
+    async def sticker_approve(request: Request, media_id: int, body: StickerApproveBody) -> dict[str, Any]:
+        runtime = _runtime(request)
+        status = await runtime.console.approve_sticker(
+            media_id,
+            body.group_id,
+            {
+                "name": body.name,
+                "description": body.description,
+                "tags": body.tags,
+                "moods": body.moods,
+                "scenes": body.scenes,
+                "avoid_scenes": body.avoid_scenes,
+            },
+        )
+        if status != "approved":
+            raise HTTPException(status_code=400, detail=status)
+        return {"ok": True}
+
+    @router.post("/api/stickers/{media_id}/reject", dependencies=[Depends(require_auth)])
+    async def sticker_reject(request: Request, media_id: int, body: StickerRejectBody) -> dict[str, Any]:
+        runtime = _runtime(request)
+        if not await runtime.console.reject_sticker(media_id, body.group_id, body.reason):
+            raise HTTPException(status_code=404, detail="sticker not found")
+        return {"ok": True}
+
+    @router.patch("/api/stickers/{media_id}/metadata", dependencies=[Depends(require_auth)])
+    async def sticker_metadata(request: Request, media_id: int, body: StickerMetadataBody) -> dict[str, Any]:
+        runtime = _runtime(request)
+        if not await runtime.console.update_sticker_metadata(media_id, body.model_dump()):
+            raise HTTPException(status_code=404, detail="sticker not found")
+        return {"ok": True}
+
+    @router.get("/api/stickers/{media_id}/context", dependencies=[Depends(require_auth)])
+    async def sticker_context(request: Request, media_id: int) -> dict[str, Any]:
+        runtime = _runtime(request)
+        return {"items": await runtime.console.sticker_context(media_id)}
 
     @router.websocket("/ws/live")
     async def live(websocket: WebSocket, ticket: str | None = Query(default=None)) -> None:

@@ -20,7 +20,7 @@ async def test_new_database_records_initial_migration(tmp_path: Path) -> None:
     finally:
         await store.close()
 
-    assert [row[0] for row in rows] == [1, 2]
+    assert [row[0] for row in rows] == [1, 2, 3]
     assert all(isinstance(row[1], str) and row[1] for row in rows)
 
 
@@ -62,7 +62,7 @@ async def test_legacy_database_migrates_with_backup_and_preserves_data(tmp_path:
 
     assert {"prompt_tokens", "completion_tokens", "total_tokens"} <= columns
     assert row == (0, 0, 0)
-    assert versions == [(1,), (2,)]
+    assert versions == [(1,), (2,), (3,)]
     assert "inbound_media" in tables
     assert list((tmp_path / "backups").glob("legacy-*.db"))
 

@@ -26,7 +26,7 @@ class StickerPromotionService:
         library_dir: str | Path,
         *,
         auto_tag: StickerAutoTagConfig,
-        tagger: _Tagger,
+        tagger: _Tagger | None,
         store: StateStore,
         audit: AuditLog | None = None,
     ) -> None:
@@ -54,6 +54,8 @@ class StickerPromotionService:
         except ValueError:
             await self._audit("sticker_promotion_rejected", "path escape", group_id)
             return "pending_review"
+        if self.tagger is None:
+            return "pending_review"
         try:
             draft = await self.tagger.draft_for_image(source)
         except Exception as exc:  # noqa: BLE001 - vision boundary; keep pending on failure
@@ -66,7 +68,49 @@ class StickerPromotionService:
             tag_confidence=draft.confidence,
         )
         if draft.confidence < group_config.auto_approve_confidence:
+            await self.store.update_inbound_media_metadata(
+                media_id,
+                name=draft.name,
+                description=draft.description,
+                tags=draft.tags,
+                moods=draft.moods,
+                scenes=draft.scenes,
+                avoid_scenes=draft.avoid_scenes,
+            )
             return "pending_review"
+
+        return await self.approve(
+            media_id,
+            group_id,
+            metadata={
+                "name": draft.name,
+                "description": draft.description,
+                "tags": draft.tags,
+                "moods": draft.moods,
+                "scenes": draft.scenes,
+                "avoid_scenes": draft.avoid_scenes,
+            },
+            auto_approved=True,
+        )
+
+    async def approve(
+        self,
+        media_id: int,
+        group_id: str,
+        *,
+        metadata: dict[str, object] | None = None,
+        auto_approved: bool = False,
+    ) -> str:
+        media = await self.store.get_inbound_media(media_id)
+        if media is None:
+            return "missing"
+        source = (self.library_dir / str(media["local_path"])).resolve()
+        try:
+            source.relative_to(self.library_dir)
+        except ValueError:
+            await self._audit("sticker_promotion_rejected", "path escape", group_id)
+            return "pending_review"
+        values = _metadata_values(media, metadata or {})
 
         target = (self.library_dir / "images" / f"{media['sha256']}{source.suffix.lower()}").resolve()
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -79,17 +123,17 @@ class StickerPromotionService:
             entry = StickerManifestEntry.model_validate(
                 {
                     "id": sticker_id,
-                    "name": draft.name,
+                    "name": values["name"],
                     "file": relative_file,
                     "approved": True,
-                    "description": draft.description,
-                    "tags": draft.tags,
-                    "moods": draft.moods,
-                    "scenes": draft.scenes,
-                    "avoid_scenes": draft.avoid_scenes,
+                    "description": values["description"],
+                    "tags": values["tags"],
+                    "moods": values["moods"],
+                    "scenes": values["scenes"],
+                    "avoid_scenes": values["avoid_scenes"],
                     "tag_source": "auto",
                     "content_hash": f"sha256:{media['sha256']}",
-                    "tag_confidence": draft.confidence,
+                    "tag_confidence": media.get("tag_confidence"),
                     "source": "group_capture",
                     "source_group_ids": [group_id],
                     "scope_groups": [group_id],
@@ -103,8 +147,7 @@ class StickerPromotionService:
             media_id,
             "approved",
             vision_provider=self.auto_tag.provider,
-            tag_confidence=draft.confidence,
-            auto_approved=True,
+            auto_approved=auto_approved,
         )
         await self._audit("sticker_promotion_approved", f"group={group_id}", group_id)
         return "approved"
@@ -129,3 +172,33 @@ def _entry_id(entries: list[StickerManifestEntry], sha256: str) -> str:
     while f"{base}-{index}" in existing:
         index += 1
     return f"{base}-{index}"
+
+
+def _metadata_values(media: dict[str, object], overrides: dict[str, object]) -> dict[str, object]:
+    return {
+        "name": str(overrides.get("name") or media.get("name") or f"表情 {str(media.get('sha256', ''))[:8]}"),
+        "description": str(overrides.get("description") or media.get("description") or ""),
+        "tags": _coerce_list(overrides.get("tags")) or _load_json_list(media.get("tags_json")),
+        "moods": _coerce_list(overrides.get("moods")) or _load_json_list(media.get("moods_json")),
+        "scenes": _coerce_list(overrides.get("scenes")) or _load_json_list(media.get("scenes_json")),
+        "avoid_scenes": _coerce_list(overrides.get("avoid_scenes")) or _load_json_list(media.get("avoid_scenes_json")),
+    }
+
+
+def _load_json_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        import json
+
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    return []
+
+
+def _coerce_list(value: object) -> list[str]:
+    return [str(item) for item in value] if isinstance(value, list) else []

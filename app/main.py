@@ -99,7 +99,6 @@ def build_runtime(config: AppConfig) -> AppRuntime:
     content_filter = ContentFilter()
     audit = AuditLog(store)
     bus = EventBus()
-    console = ConsoleService(sessions, memory, store, bus)
 
     provider = build_llm_provider(config.llm)
 
@@ -116,27 +115,35 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         same_group_only=config.sticker.ingest.same_group_only,
     )
     promotion: StickerPromotionService | None = None
-    if (
-        config.sticker.ingest.enabled
-        and config.sticker.auto_tag.enabled
-        and any(group.vision_enabled for group in config.sticker.ingest.groups.values())
-    ):
-        try:
-            vision_provider = build_vision_provider(config.sticker.auto_tag)
-            tagger = StickerTagger(
-                config.sticker_dir,
-                config.sticker.auto_tag,
-                vision_provider,
-            )
-            promotion = StickerPromotionService(
-                config.sticker_dir,
-                auto_tag=config.sticker.auto_tag,
-                tagger=tagger,
-                store=store,
-                audit=audit,
-            )
-        except ValueError as exc:
-            logger.warning("sticker promotion disabled: %s", exc)
+    if config.sticker.ingest.enabled:
+        tagger: StickerTagger | None = None
+        if config.sticker.auto_tag.enabled and any(
+            group.vision_enabled for group in config.sticker.ingest.groups.values()
+        ):
+            try:
+                vision_provider = build_vision_provider(config.sticker.auto_tag)
+                tagger = StickerTagger(
+                    config.sticker_dir,
+                    config.sticker.auto_tag,
+                    vision_provider,
+                )
+            except ValueError as exc:
+                logger.warning("sticker vision tagging disabled: %s", exc)
+        promotion = StickerPromotionService(
+            config.sticker_dir,
+            auto_tag=config.sticker.auto_tag,
+            tagger=tagger,
+            store=store,
+            audit=audit,
+        )
+    console = ConsoleService(
+        sessions,
+        memory,
+        store,
+        bus,
+        sticker_dir=config.sticker_dir,
+        sticker_promotion=promotion,
+    )
     inbound_ingest = InboundIngest(
         config.sticker_dir,
         config.sticker.ingest,

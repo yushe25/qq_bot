@@ -203,6 +203,15 @@ CREATE INDEX IF NOT EXISTS idx_context_group_time ON sticker_context_observation
 CREATE INDEX IF NOT EXISTS idx_preferences_group_score ON sticker_preferences(group_id, positive_score);
 """
 
+_STICKER_INGEST_METADATA_SCHEMA = """
+ALTER TABLE inbound_media ADD COLUMN name TEXT NOT NULL DEFAULT '';
+ALTER TABLE inbound_media ADD COLUMN description TEXT NOT NULL DEFAULT '';
+ALTER TABLE inbound_media ADD COLUMN tags_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE inbound_media ADD COLUMN moods_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE inbound_media ADD COLUMN scenes_json TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE inbound_media ADD COLUMN avoid_scenes_json TEXT NOT NULL DEFAULT '[]';
+"""
+
 _UPSERT_SESSION_SQL = """
 INSERT INTO sessions (
     id, scene_type, scene_id, state, persona_id,
@@ -756,6 +765,71 @@ class StateStore:
             ),
         )
 
+    async def update_inbound_media_metadata(
+        self,
+        media_id: int,
+        *,
+        name: str = "",
+        description: str = "",
+        tags: Sequence[str] = (),
+        moods: Sequence[str] = (),
+        scenes: Sequence[str] = (),
+        avoid_scenes: Sequence[str] = (),
+    ) -> None:
+        await self._execute(
+            """
+            UPDATE inbound_media SET
+                name = ?, description = ?, tags_json = ?, moods_json = ?,
+                scenes_json = ?, avoid_scenes_json = ?
+            WHERE id = ?
+            """,
+            (
+                name,
+                description,
+                _json(list(tags)),
+                _json(list(moods)),
+                _json(list(scenes)),
+                _json(list(avoid_scenes)),
+                media_id,
+            ),
+        )
+
+    async def list_inbound_media_for_review(self, group_id: str, status: str = "pending_review") -> list[dict[str, Any]]:
+        return await self._query(
+            """
+            SELECT m.*, g.group_id, g.first_seen_at AS group_first_seen_at,
+                   g.last_seen_at AS group_last_seen_at, g.seen_count
+            FROM inbound_media m
+            JOIN inbound_media_groups g ON g.media_id = m.id
+            WHERE m.status = ? AND g.group_id = ?
+            ORDER BY m.first_seen_at ASC
+            """,
+            (status, group_id),
+        )
+
+    async def get_inbound_media_groups(self, media_id: int) -> list[dict[str, Any]]:
+        return await self._query(
+            "SELECT * FROM inbound_media_groups WHERE media_id = ? ORDER BY last_seen_at DESC",
+            (media_id,),
+        )
+
+    async def list_sticker_context_for_media(self, media_id: int) -> list[dict[str, Any]]:
+        return await self._query(
+            "SELECT * FROM sticker_context_observations WHERE media_id = ? ORDER BY observed_at DESC LIMIT 50",
+            (media_id,),
+        )
+
+    async def list_rejected_inbound_media(self, older_than: float) -> list[dict[str, Any]]:
+        return await self._query(
+            "SELECT * FROM inbound_media WHERE status = 'rejected' AND first_seen_at < ?",
+            (older_than,),
+        )
+
+    async def delete_inbound_media(self, media_id: int) -> None:
+        async with self._lock:
+            conn = self._connection()
+            await asyncio.to_thread(_delete_inbound_media_sync, conn, media_id)
+
     async def upsert_inbound_media(
         self,
         *,
@@ -1176,6 +1250,19 @@ def _insert_sticker_context_sync(
         raise
 
 
+def _delete_inbound_media_sync(conn: sqlite3.Connection, media_id: int) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("DELETE FROM sticker_context_observations WHERE media_id = ?", (media_id,))
+        conn.execute("DELETE FROM sticker_preferences WHERE media_id = ?", (media_id,))
+        conn.execute("DELETE FROM inbound_media_groups WHERE media_id = ?", (media_id,))
+        conn.execute("DELETE FROM inbound_media WHERE id = ?", (media_id,))
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def _claim_event_sync(conn: sqlite3.Connection, key: str, now_s: float, ttl_seconds: int) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -1252,6 +1339,10 @@ def _apply_sticker_ingest_schema(conn: sqlite3.Connection) -> None:
     _execute_schema_statements(conn, _STICKER_INGEST_SCHEMA)
 
 
+def _apply_sticker_ingest_metadata_schema(conn: sqlite3.Connection) -> None:
+    _execute_schema_statements(conn, _STICKER_INGEST_METADATA_SCHEMA)
+
+
 def _execute_schema_statements(conn: sqlite3.Connection, schema: str) -> None:
     for statement in schema.split(";"):
         if statement.strip():
@@ -1261,6 +1352,7 @@ def _execute_schema_statements(conn: sqlite3.Connection, schema: str) -> None:
 _MIGRATIONS = (
     Migration(version=1, name="initial_schema", apply=_apply_initial_schema),
     Migration(version=2, name="sticker_ingest", apply=_apply_sticker_ingest_schema),
+    Migration(version=3, name="sticker_ingest_metadata", apply=_apply_sticker_ingest_metadata_schema),
 )
 
 

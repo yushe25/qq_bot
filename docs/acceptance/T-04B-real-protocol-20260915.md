@@ -19,7 +19,7 @@
 | P08 | 出站 @ | 通过 | 产品 mentionUserIds 生成 at segment；真实群显示蓝色 @ |
 | P09 | 引用回复 | 通过 | reply + text segment 顺序正确 |
 | P10 | 表情媒体 | 通过 | 白名单本地图片发送成功，历史出现 image segment |
-| P11 | 私聊出入站 | 失败/阻塞 | 已确认好友关系，NapCat send_private_msg 仍超时；私聊入站未进入 QQF |
+| P11 | 私聊出入站 | 部分通过 | NapCat 恢复后私聊出站返回 message_id；私聊入站仍未进入 QQF |
 | P12 | 历史接口 | 通过 | 返回可解析消息 |
 | P13 | 成员接口 | 通过 | 返回真实成员列表 |
 | P14 | 断线重连 | 未确认 | NapCat 重启后未观察到新的入站事件，无法证明 QQF 自动恢复 |
@@ -29,9 +29,10 @@
 ## 证据摘要
 
 - P07-P10 原始报告：`.pytest-tmp/t04b-first-wave3/summary.json`。
-- P11 出站错误为 NapCat `send_private_msg` 超时，错误文本不包含密钥或完整目标号。
+- P11 最终复测：好友关系为 true，`send_private_msg` 返回成功；但 owner 发出的私聊没有创建 QQF private 会话。
+- NapCat 重启后 QQF 健康接口仍正常，但没有观察到新的群或私聊入站事件，无法证明 WS 自动恢复。
 - 报告不记录 Token、真实群号、QQ 号、message ID 或私聊内容。
 
 ## 结论
 
-T-04 不能关闭。P11 需要 NapCat 私聊链路进一步诊断；P14/P15 需要可控断线重连和事件重放条件。
+T-04 不能关闭。P11 仅剩私聊入站未打通；P14/P15 需要进一步确认 QQF WS 是否在 NapCat 重启后真正恢复和去重。

@@ -85,21 +85,21 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
     @router.post("/api/sessions/{session_id}/pause", dependencies=[Depends(require_auth)])
     async def pause_session(request: Request, session_id: str) -> dict[str, Any]:
         runtime = _runtime(request)
-        if not await runtime.scheduler.pause(session_id):
+        if not await runtime.console.pause(session_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"ok": True}
 
     @router.post("/api/sessions/{session_id}/resume", dependencies=[Depends(require_auth)])
     async def resume_session(request: Request, session_id: str) -> dict[str, Any]:
         runtime = _runtime(request)
-        if not await runtime.scheduler.resume(session_id):
+        if not await runtime.console.resume(session_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"ok": True}
 
     @router.post("/api/sessions/{session_id}/reset-memory", dependencies=[Depends(require_auth)])
     async def reset_memory(request: Request, session_id: str) -> dict[str, Any]:
         runtime = _runtime(request)
-        if not await runtime.scheduler.reset_memory(session_id):
+        if not await runtime.console.reset_memory(session_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"ok": True}
 
@@ -122,7 +122,7 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
         runtime = _runtime(request)
         if runtime.sessions.get(session_id) is None:
             raise HTTPException(status_code=404, detail="session not found")
-        if not await runtime.scheduler.delete_learning_note(session_id, kind, key):
+        if not await runtime.console.delete_learning_note(session_id, kind, key):
             raise HTTPException(status_code=404, detail="learning note not found")
         return {"ok": True}
 
@@ -135,7 +135,7 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
         runtime = _runtime(request)
         if runtime.sessions.get(session_id) is None:
             raise HTTPException(status_code=404, detail="session not found")
-        if not await runtime.scheduler.delete_member_data(session_id, member_id):
+        if not await runtime.console.delete_member_data(session_id, member_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"ok": True}
 
@@ -144,7 +144,7 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
         runtime = _runtime(request)
         if runtime.sessions.get(session_id) is None:
             raise HTTPException(status_code=404, detail="session not found")
-        if not await runtime.scheduler.clear_learning(session_id):
+        if not await runtime.console.clear_learning(session_id):
             raise HTTPException(status_code=404, detail="session not found")
         return {"ok": True}
 

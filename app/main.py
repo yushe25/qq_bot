@@ -15,6 +15,7 @@ from app.agent.providers.router import build_llm_provider
 from app.agent.sticker_library import StickerLibrary
 from app.config import AppConfig
 from app.console.router import build_console_router
+from app.console.service import ConsoleService
 from app.logging_setup import configure_logging
 from app.memory.store import MemoryStore
 from app.platform.gateway import NullGateway
@@ -47,6 +48,7 @@ class AppRuntime:
     content_filter: ContentFilter
     audit: AuditLog
     bus: EventBus
+    console: ConsoleService
     safety: SafetyPipeline
     learning: LearningRunner
     orchestrator: Orchestrator
@@ -91,6 +93,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
     content_filter = ContentFilter()
     audit = AuditLog(store)
     bus = EventBus()
+    console = ConsoleService(sessions, memory, store, bus)
 
     provider = build_llm_provider(config.llm)
 
@@ -148,6 +151,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         content_filter=content_filter,
         audit=audit,
         bus=bus,
+        console=console,
         safety=safety,
         learning=learning,
         orchestrator=orchestrator,

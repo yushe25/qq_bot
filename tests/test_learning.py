@@ -400,7 +400,7 @@ async def test_console_learning_delete_endpoints() -> None:
         sessions=SimpleNamespace(
             get=lambda session_id: Session(id=session_id, scene_type="group", scene_id="100000")
         ),
-        scheduler=SimpleNamespace(
+        console=SimpleNamespace(
             delete_learning_note=delete_learning_note,
             delete_member_data=delete_member_data,
             clear_learning=clear_learning,

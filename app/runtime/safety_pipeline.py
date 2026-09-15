@@ -282,7 +282,7 @@ class SafetyPipeline:
             await self._blocked(action, ctx.session.id, reason, str(item.get("sticker_id", "")), f"{scene_type} {scene_id} 表情")
             return {"ok": False, "action": "send_sticker", "reason": reason}
         sticker_id = str(item.get("sticker_id", ""))
-        sticker = self.sticker_library.resolve(sticker_id)
+        sticker = self.sticker_library.resolve_for_scene(sticker_id, scene_id)
         if sticker is None:
             reason = f"表情未在白名单中或不可用: {sticker_id}"
             await self._blocked(action, ctx.session.id, reason, sticker_id, f"{scene_type} {scene_id} 表情")

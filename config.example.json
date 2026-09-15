@@ -127,6 +127,21 @@
           "model": "vision-backup-model"
         }
       }
+    },
+    "ingest": {
+      "enabled": false,
+      "sameGroupOnly": true,
+      "observationBeforeMessages": 8,
+      "observationAfterMessages": 8,
+      "groups": {
+        "100000": {
+          "enabled": true,
+          "visionEnabled": false,
+          "autoApproveConfidence": 0.85,
+          "maxItems": 200,
+          "maxBytes": 2147483648
+        }
+      }
     }
   }
 }

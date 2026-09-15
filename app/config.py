@@ -263,10 +263,38 @@ class StickerAutoTagConfig(BaseModel):
         return self
 
 
+class StickerIngestGroupConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    vision_enabled: bool = False
+    auto_approve_confidence: float = Field(default=0.85, ge=0.0, le=1.0)
+    max_items: int = Field(default=200, ge=1, le=200)
+    max_bytes: int = Field(default=2 * 1024 * 1024 * 1024, ge=1, le=2 * 1024 * 1024 * 1024)
+
+
+class StickerIngestConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    same_group_only: bool = True
+    observation_before_messages: int = Field(default=8, ge=0, le=50)
+    observation_after_messages: int = Field(default=8, ge=0, le=50)
+    groups: dict[str, StickerIngestGroupConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_group_ids(self) -> StickerIngestConfig:
+        for group_id in self.groups:
+            if not re.fullmatch(r"\d+", group_id):
+                raise ValueError(f"sticker.ingest.groups key must be numeric: {group_id!r}")
+        return self
+
+
 class StickerConfig(BaseModel):
     enabled: bool = False
     allowed_ids: list[str] = Field(default_factory=list)
     auto_tag: StickerAutoTagConfig = Field(default_factory=StickerAutoTagConfig)
+    ingest: StickerIngestConfig = Field(default_factory=StickerIngestConfig)
 
     @model_validator(mode="after")
     def validate_allowed_ids(self) -> StickerConfig:
@@ -289,6 +317,16 @@ class AppConfig(BaseModel):
     sticker: StickerConfig = Field(default_factory=StickerConfig)
     persona_path: str = "personas/default.yaml"
     sticker_dir: str = "stickers"
+
+    @model_validator(mode="after")
+    def validate_sticker_ingest_groups(self) -> AppConfig:
+        allowed_groups = set(self.safety.allow_groups)
+        for group_id, group_config in self.sticker.ingest.groups.items():
+            if group_id not in allowed_groups:
+                raise ValueError(f"sticker.ingest group is not in safety.allowGroups: {group_id}")
+            if group_config.vision_enabled and not self.sticker.auto_tag.enabled:
+                raise ValueError("sticker.ingest.visionEnabled=true requires sticker.autoTag.enabled")
+        return self
 
     @classmethod
     def load(cls, path: str | Path | None = None) -> AppConfig:

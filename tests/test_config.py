@@ -147,6 +147,57 @@ def test_qq_transport_rejects_invalid_scheme() -> None:
         AppConfig.model_validate({"qq": {"ws_url": "http://127.0.0.1:3001"}})
 
 
+def test_sticker_ingest_defaults_disabled_and_same_group_only() -> None:
+    config = AppConfig()
+
+    assert config.sticker.ingest.enabled is False
+    assert config.sticker.ingest.same_group_only is True
+    assert config.sticker.ingest.observation_before_messages == 8
+    assert config.sticker.ingest.observation_after_messages == 8
+
+
+def test_sticker_ingest_requires_group_in_safety_allowlist() -> None:
+    with pytest.raises(ValidationError, match="safety.allowGroups"):
+        AppConfig.model_validate(
+            {
+                "safety": {"allow_groups": ["100000"]},
+                "sticker": {"ingest": {"groups": {"200000": {"enabled": True}}}},
+            }
+        )
+
+
+def test_sticker_ingest_vision_requires_auto_tag() -> None:
+    with pytest.raises(ValidationError, match="autoTag.enabled"):
+        AppConfig.model_validate(
+            {
+                "safety": {"allow_groups": ["100000"]},
+                "sticker": {
+                    "ingest": {
+                        "groups": {"100000": {"enabled": True, "vision_enabled": True}}
+                    }
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "group_config",
+    [
+        {"auto_approve_confidence": 1.1},
+        {"max_items": 201},
+        {"max_bytes": 2 * 1024 * 1024 * 1024 + 1},
+    ],
+)
+def test_sticker_ingest_group_limits_are_bounded(group_config: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        AppConfig.model_validate(
+            {
+                "safety": {"allow_groups": ["100000"]},
+                "sticker": {"ingest": {"groups": {"100000": group_config}}},
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

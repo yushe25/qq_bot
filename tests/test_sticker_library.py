@@ -322,3 +322,73 @@ def test_sticker_catalog_text_is_bounded_and_prioritizes_semantics(tmp_path: Pat
     assert len(text) <= 24
     assert text.startswith("- mock-01 | 无语猫")
     assert "images/" not in text
+
+
+def test_sticker_library_isolates_group_captured_assets(tmp_path: Path) -> None:
+    root = tmp_path / "stickers"
+    _write_manifest(
+        root / "manifest.yaml",
+        [
+            {
+                "id": "auto-01",
+                "name": "无语猫",
+                "file": "images/mock-01.gif",
+                "approved": True,
+                "source": "group_capture",
+                "source_group_ids": ["100000"],
+                "scope_groups": ["100000"],
+            }
+        ],
+    )
+    _write_gif(root / "images" / "mock-01.gif")
+    library = init_library(root, allowed_ids=("auto-01",))
+
+    assert [entry.sticker_id for entry in library.catalog_for_scene("100000")] == ["auto-01"]
+    assert library.catalog_for_scene("200000") == ()
+    assert library.resolve_for_scene("auto-01", "100000") is not None
+    assert library.resolve_for_scene("auto-01", "200000") is None
+
+
+def test_sticker_library_legacy_assets_remain_global(tmp_path: Path) -> None:
+    library = _library(
+        tmp_path,
+        [
+            {
+                "id": "mock-01",
+                "name": "旧素材",
+                "file": "images/mock-01.gif",
+                "approved": True,
+            }
+        ],
+    )
+
+    assert library.resolve_for_scene("mock-01", "999999") is not None
+
+
+def test_sticker_library_can_explicitly_disable_same_group_only(tmp_path: Path) -> None:
+    root = tmp_path / "stickers"
+    _write_manifest(
+        root / "manifest.yaml",
+        [
+            {
+                "id": "auto-01",
+                "name": "无语猫",
+                "file": "images/mock-01.gif",
+                "approved": True,
+                "source": "group_capture",
+                "scope_groups": ["100000"],
+            }
+        ],
+    )
+    _write_gif(root / "images" / "mock-01.gif")
+    from app.agent.sticker_library import StickerLibrary
+
+    library = StickerLibrary(
+        root,
+        enabled=True,
+        allowed_ids=["auto-01"],
+        media_guard=MediaGuard(max_bytes=1024, max_pixels=10_000),
+        same_group_only=False,
+    )
+
+    assert library.resolve_for_scene("auto-01", "200000") is not None

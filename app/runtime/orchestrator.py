@@ -115,11 +115,15 @@ class Orchestrator:
         provider_max_tokens = None if self.config.llm.providers else self.config.llm.max_tokens
         library = self.sticker_library
         sticker_ids = (
-            [entry.sticker_id for entry in library.catalog()]
+            [entry.sticker_id for entry in library.catalog_for_scene(session.scene_id)]
             if library is not None and library.available
             else []
         )
-        sticker_catalog = library.catalog_text() if library is not None and sticker_ids else ""
+        sticker_catalog = (
+            library.catalog_text_for_scene(session.scene_id)
+            if library is not None and sticker_ids
+            else ""
+        )
 
         for step in range(self.config.scheduler.max_tool_steps):
             outcome.steps = step + 1

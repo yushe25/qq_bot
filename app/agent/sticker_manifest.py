@@ -37,6 +37,9 @@ class StickerManifestEntry(BaseModel):
     tagged_at: str | None = None
     content_hash: str | None = None
     tag_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    source: Literal["manual", "group_capture"] = "manual"
+    source_group_ids: list[str] = Field(default_factory=list, max_length=20)
+    scope_groups: list[str] = Field(default_factory=list, max_length=20)
 
     @field_validator("id")
     @classmethod
@@ -69,6 +72,14 @@ class StickerManifestEntry(BaseModel):
         cleaned = [item.strip() for item in value]
         if any(not item for item in cleaned):
             raise ValueError("semantic list entries must not be blank")
+        return cleaned
+
+    @field_validator("source_group_ids", "scope_groups")
+    @classmethod
+    def validate_group_ids(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in value]
+        if any(not item.isdigit() for item in cleaned):
+            raise ValueError("group scope entries must be numeric")
         return cleaned
 
 

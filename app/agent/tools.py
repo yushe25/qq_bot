@@ -208,7 +208,7 @@ async def _dispatch(ctx: ToolContext, call: ToolCall) -> ToolResult:
             return ToolResult(success=False, message="表情功能未启用")
         if any(item.get("type") == "send_sticker" for item in ctx.outbox):
             return ToolResult(success=False, message="本轮已发送表情，每轮最多一张")
-        sticker = library.resolve(args.sticker_id)
+        sticker = library.resolve_for_scene(args.sticker_id, ctx.session.scene_id)
         if sticker is None:
             return ToolResult(success=False, message=f"表情未在白名单中或不可用: {args.sticker_id}")
         if len(ctx.outbox) >= ctx.config.safety.max_sends_per_wake:

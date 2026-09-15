@@ -42,6 +42,7 @@ class StickerLibrary:
         allowed_ids: Sequence[str] = (),
         media_guard: MediaGuard | None = None,
         store: StateStore | None = None,
+        same_group_only: bool = True,
     ) -> None:
         self.library_dir = Path(library_dir).resolve()
         self.enabled = enabled
@@ -51,6 +52,7 @@ class StickerLibrary:
             max_pixels=40_960_000,
         )
         self.store = store
+        self.same_group_only = same_group_only
         self.error: str | None = None
         self._entries: dict[str, StickerManifestEntry] = {}
         self._load()
@@ -134,13 +136,32 @@ class StickerLibrary:
             )
         return tuple(entries)
 
+    def catalog_for_scene(self, scene_id: str) -> tuple[StickerCatalogEntry, ...]:
+        return tuple(
+            entry
+            for entry in self.catalog()
+            if self._scene_allowed(self._entries.get(entry.sticker_id), scene_id)
+        )
+
+    def catalog_text_for_scene(self, scene_id: str, max_chars: int = 4000) -> str:
+        return self._catalog_text(self.catalog_for_scene(scene_id), max_chars=max_chars)
+
+    def resolve_for_scene(self, sticker_id: str, scene_id: str) -> StickerFile | None:
+        entry = self._entries.get(sticker_id)
+        if not self._scene_allowed(entry, scene_id):
+            return None
+        return self.resolve(sticker_id)
+
     def catalog_text(self, max_chars: int = 4000) -> str:
+        return self._catalog_text(self.catalog(), max_chars=max_chars)
+
+    def _catalog_text(self, entries: tuple[StickerCatalogEntry, ...], *, max_chars: int) -> str:
         limit = max(0, int(max_chars))
         if limit == 0:
             return ""
         lines: list[str] = []
         used = 0
-        for entry in self.catalog():
+        for entry in entries:
             fields = [entry.sticker_id, entry.name]
             if entry.tags:
                 fields.append("标签：" + "、".join(entry.tags))
@@ -178,3 +199,8 @@ class StickerLibrary:
     async def record_usage(self, sticker_id: str) -> None:
         if self.store is not None:
             await self.store.increment_sticker_usage(sticker_id)
+
+    def _scene_allowed(self, entry: StickerManifestEntry | None, scene_id: str) -> bool:
+        if entry is None or not self.same_group_only or not entry.scope_groups:
+            return True
+        return scene_id in entry.scope_groups

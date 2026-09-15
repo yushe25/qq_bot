@@ -180,6 +180,7 @@ python scripts/onebot_check.py
 - 事件先进入 8 秒批处理窗口，合并成一次唤醒决策。
 - 唤醒类型优先级：`@` 提及 > 昵称 > 提问 > 关键词 > 拍一拍 > 普通消息概率唤醒 > 定时唤醒。
 - LLM 通过工具自主决定看群历史、查成员、发送、引用回复、私聊 owner、等待、潜水或更新记忆。
+- 需要明确 @ 群友时，模型使用 `mentionUserIds` 提交成员 QQ 号；目标必须来自当前群成员列表，最多 5 人，非成员或查询失败时整条消息拒绝。
 - 出站文本会按短句拆分并清理无关标点；字面 `@` 会保留，CQ 码仍由安全管线拒绝。
 - 发言后进入 90 秒冷却；无行动时自动潜水，连续无行动会强制缩短下一次潜水间隔，避免“永眠”。
 - 全局和按会话都有发送/唤醒频率上限，防止刷屏。
@@ -258,6 +259,7 @@ python scripts/onebot_check.py
 | `qq.httpUrl` | OneBot HTTP 动作地址 | `http://127.0.0.1:3000` |
 | `qq.accessToken` | OneBot Authorization Bearer | 空 |
 | `qq.ownerQq` | 允许的私聊所有者 | 空 |
+| `qq.allowRemote` | 显式允许连接非回环 OneBot 地址；默认拒绝远端 NapCat | `false` |
 | `llm.provider` | `mock`、旧的 `openai-compatible`，或 `llm.providers` 中的 Provider ID | `openai-compatible` |
 | `llm.providers` | 命名 Provider 注册表；支持 DeepSeek、智谱、通义、Moonshot、硅基流动等 OpenAI 兼容服务 | `{}` |
 | `llm.fallbacks` | 主 Provider 失败时按顺序尝试的备用 Provider ID | `[]` |
@@ -305,6 +307,8 @@ python scripts/onebot_check.py
 
 环境变量会被 JSON 配置覆盖逻辑合并：`QQF_LLM_API_KEY`、`QQF_ONEBOT_TOKEN`、`QQF_CONSOLE_TOKEN`、`QQF_DATA_DIR`。命名 Provider 的 Key 由各自的 `apiKeyEnv` 指定，例如 `DEEPSEEK_API_KEY`；JSON 中的明文 `apiKey` 会被拒绝。`QQF_DATA_DIR` 会改变状态库目录。程序启动时会在状态目录创建 `qqf.lock`，重复启动会直接退出，避免两个实例同时写同一个 SQLite 库。
 
+`qq.wsUrl` 和 `qq.httpUrl` 默认只允许 `127.0.0.1`、`localhost`、`::1`。连接非回环 NapCat 时必须显式设置 `qq.allowRemote=true`；启动时会记录远端风险 WARN。该开关不表示 Token 鉴权已经可靠，NapCat 错误 Token 可连接时仍应保持回环部署。
+
 ## 控制台
 
 默认地址 `http://127.0.0.1:3100`：
@@ -316,14 +320,16 @@ python scripts/onebot_check.py
 - `DELETE /api/sessions/{id}/learning-members/{member_id}`：删除某成员相关学习数据
 - `DELETE /api/sessions/{id}/learning`：清空该会话的学习数据
 - `GET /api/audit`、`GET /api/wake-logs`
+- `POST /api/ws-ticket`：申请一次性 WebSocket ticket，有效期 60 秒且只能使用一次
 - `WS /ws/live`：实时事件流
 
 默认只允许本机访问。未配置 `console.token` 时，只有来自回环地址（`127.0.0.1`、`::1`、
 `localhost`）的请求被放行，其他来源一律返回 `401 loophole blocked`；此模式下本机上的任何
 进程和任何用户都能读写控制台（唤醒、暂停、改记忆、清学习数据）。
-设置 `QQF_CONSOLE_TOKEN`（或 `console.token`）后，HTTP API 与 WebSocket 需要
-`Authorization: Bearer <token>`，也接受 `?token=<token>` 查询参数；把 token 放在地址栏
-等于明文出现在浏览器历史与访问日志里，只在本机临时调试时使用。
+设置 `QQF_CONSOLE_TOKEN`（或 `console.token`）后，HTTP API 只接受
+`Authorization: Bearer <token>`，不再接受 URL 查询参数。浏览器连接 WebSocket 前先通过
+受保护的 `POST /api/ws-ticket` 申请一次性 ticket，`WS /ws/live?ticket=<ticket>` 只携带
+短时凭证；ticket 60 秒过期、单次使用并绑定来源。控制台页面启动后可通过右上角 Token 按钮录入。
 
 ## 目录结构
 

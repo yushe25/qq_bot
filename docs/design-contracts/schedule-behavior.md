@@ -58,6 +58,10 @@ schedule:
 - Mention 潜水的随机判定每次唤醒只执行一次；未命中时必须先排队回复，不能通过重复调用 `qq_dive` 反复重掷。
 - 发送总量熔断一旦触发，不自动恢复，需 owner 到控制台恢复。
 - 作息配置缺失时使用默认窗口，不允许“永不发言”或“全天刷屏”。
+- 每会话只保留一个待唤醒槽位；冷却、限流或作息延后期间，新到达的低优先级消息不得覆盖已有高优先级唤醒。
+- 待唤醒优先级从高到低为：`force > mention > name > question > keyword > poke > normal > scheduled`。
+- 合并时采用优先级更高者的 category、reason 和 probability；双方 events 按到达顺序合并，仅保留最近 40 条。
+- `deferred` 始终为 true；`defer_until_active` 和 `phase_ready` 使用逻辑或，重启后从 SQLite 恢复相同结果。
 
 ## 验收指标
 
@@ -89,3 +93,5 @@ schedule:
 - 配置修改需要重启生效；重启后每日计数、会话状态与作息来自 SQLite 持久化。
 - `sticker_only_probability` 与 `sticker_with_text_probability` 已 deprecated；字段暂时保留解析兼容，
   但不再参与运行时选图，后续版本单独删除。
+- 待唤醒槽位使用优先级合并，不新增队列表或数据库迁移；冷却期普通消息只扩充上下文，
+  不会把 mention 降级为 normal。

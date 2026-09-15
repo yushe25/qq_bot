@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +95,56 @@ def test_config_example_parses_with_auto_tag_placeholders() -> None:
 
     assert config.sticker.auto_tag.provider == "vision-main"
     assert config.sticker.auto_tag.providers["vision-main"].api_key_env == "QQF_VISION_API_KEY"
+
+
+def test_qq_transport_allows_loopback_by_default() -> None:
+    config = AppConfig.model_validate(
+        {
+            "qq": {
+                "ws_url": "ws://127.0.0.1:3001",
+                "http_url": "http://localhost:3000",
+            }
+        }
+    )
+
+    assert config.qq.allow_remote is False
+
+
+@pytest.mark.parametrize(
+    "qq",
+    [
+        {"ws_url": "ws://192.168.1.20:3001"},
+        {"http_url": "http://10.0.0.5:3000"},
+    ],
+)
+def test_qq_transport_rejects_remote_by_default(qq: dict[str, str]) -> None:
+    with pytest.raises(ValidationError, match="allowRemote=true"):
+        AppConfig.model_validate({"qq": qq})
+
+
+def test_qq_transport_allows_remote_only_with_explicit_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="qqf.config"):
+        config = AppConfig.model_validate(
+            {
+                "qq": {
+                    "ws_url": "wss://napcat.example/ws",
+                    "http_url": "https://napcat.example",
+                    "access_token": "must-not-appear",
+                    "allow_remote": True,
+                }
+            }
+        )
+
+    assert config.qq.allow_remote is True
+    assert "non-loopback OneBot transport" in caplog.text
+    assert "must-not-appear" not in caplog.text
+
+
+def test_qq_transport_rejects_invalid_scheme() -> None:
+    with pytest.raises(ValidationError, match="absolute URL"):
+        AppConfig.model_validate({"qq": {"ws_url": "http://127.0.0.1:3001"}})
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -14,6 +15,7 @@ from app.sticker_limits import MAX_STICKER_DESCRIPTION_CHARS, MAX_STICKER_TAGS
 _PROVIDER_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 _BLOCKED_EXTRA_HEADERS = {"authorization", "content-type"}
+logger = logging.getLogger("qqf.config")
 
 
 class QQConfig(BaseModel):
@@ -22,6 +24,29 @@ class QQConfig(BaseModel):
     access_token: str = ""
     owner_qq: str = ""
     enabled: bool = True
+    allow_remote: bool = False
+
+    @model_validator(mode="after")
+    def validate_transport_scope(self) -> QQConfig:
+        remote_fields = [
+            field
+            for field, value, schemes in (
+                ("qq.wsUrl", self.ws_url, {"ws", "wss"}),
+                ("qq.httpUrl", self.http_url, {"http", "https"}),
+            )
+            if _validate_qq_transport_url(field, value, schemes)
+        ]
+        if remote_fields and not self.allow_remote:
+            raise ValueError(
+                "non-loopback qq transport requires qq.allowRemote=true: "
+                + ", ".join(remote_fields)
+            )
+        if remote_fields:
+            logger.warning(
+                "qq.allowRemote=true permits non-loopback OneBot transport: %s",
+                ", ".join(remote_fields),
+            )
+        return self
 
 
 class ProviderCapabilities(BaseModel):
@@ -316,3 +341,11 @@ def _validate_extra_headers(value: dict[str, str]) -> dict[str, str]:
         if key.lower() in _BLOCKED_EXTRA_HEADERS:
             raise ValueError(f"extraHeaders must not override {key!r}")
     return value
+
+
+def _validate_qq_transport_url(field: str, value: str, schemes: set[str]) -> bool:
+    parsed = urlsplit(value)
+    if parsed.scheme not in schemes or not parsed.hostname:
+        allowed = ", ".join(sorted(schemes))
+        raise ValueError(f"{field} must be an absolute URL using {allowed}")
+    return parsed.hostname not in _LOOPBACK_HOSTS

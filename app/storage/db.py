@@ -871,6 +871,58 @@ class StateStore:
             (limit,),
         )
 
+    async def increment_sticker_preference(
+        self,
+        media_id: int,
+        group_id: str,
+        situation_tag: str,
+        *,
+        positive_delta: float = 0.0,
+        negative_delta: float = 0.0,
+        usage_delta: int = 0,
+    ) -> None:
+        await self._execute(
+            """
+            INSERT INTO sticker_preferences (
+                media_id, group_id, situation_tag, positive_score, negative_score,
+                usage_count, last_updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(media_id, group_id, situation_tag) DO UPDATE SET
+                positive_score = positive_score + ?,
+                negative_score = negative_score + ?,
+                usage_count = usage_count + ?,
+                last_updated_at = excluded.last_updated_at
+            """,
+            (
+                media_id,
+                group_id,
+                situation_tag,
+                positive_delta,
+                negative_delta,
+                usage_delta,
+                now_ms(),
+                positive_delta,
+                negative_delta,
+                usage_delta,
+            ),
+        )
+
+    async def list_sticker_preferences(
+        self,
+        group_id: str,
+        media_ids: Sequence[int] | None = None,
+    ) -> list[dict[str, Any]]:
+        if media_ids:
+            placeholders = ",".join("?" for _ in media_ids)
+            return await self._query(
+                f"SELECT * FROM sticker_preferences WHERE group_id = ? AND media_id IN ({placeholders})",
+                (group_id, *media_ids),
+            )
+        return await self._query(
+            "SELECT * FROM sticker_preferences WHERE group_id = ? ORDER BY positive_score DESC, negative_score ASC",
+            (group_id,),
+        )
+
     async def get_daily_send_count(self, session_id: str, day: str) -> int:
         rows = await self._query(
             "SELECT count FROM daily_send_counts WHERE session_id = ? AND day = ?",

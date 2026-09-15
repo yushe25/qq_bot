@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from app.config import StickerIngestConfig
 from app.domain.types import NormalizedEvent
 from app.media.inbound_ingest import IngestResult
+from app.memory.sticker_preferences import StickerPreferenceService
 from app.storage.db import StateStore
 
 _CONTEXT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -26,14 +27,22 @@ _CONTEXT_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 @dataclass
 class _PendingObservation:
     observation_id: int
+    media_id: int
+    group_id: str
     before: list[dict[str, object]]
     after: list[dict[str, object]] = field(default_factory=list)
 
 
 class StickerContextObserver:
-    def __init__(self, config: StickerIngestConfig, store: StateStore) -> None:
+    def __init__(
+        self,
+        config: StickerIngestConfig,
+        store: StateStore,
+        preferences: StickerPreferenceService | None = None,
+    ) -> None:
         self.config = config
         self.store = store
+        self.preferences = preferences
         self._recent: dict[str, deque[dict[str, object]]] = {}
         self._pending: dict[str, list[_PendingObservation]] = {}
 
@@ -65,7 +74,12 @@ class StickerContextObserver:
                     source="group_capture",
                 )
                 self._pending.setdefault(group_id, []).append(
-                    _PendingObservation(observation_id=observation_id, before=before)
+                    _PendingObservation(
+                        observation_id=observation_id,
+                        media_id=media_id,
+                        group_id=group_id,
+                        before=before,
+                    )
                 )
             return
         text = event.text.replace("\n", " ").strip()
@@ -93,6 +107,12 @@ class StickerContextObserver:
                     observation.after,
                     tags,
                 )
+                if self.preferences is not None and tags:
+                    await self.preferences.record_member_usage(
+                        observation.media_id,
+                        observation.group_id,
+                        tags,
+                    )
             else:
                 keep.append(observation)
         if keep:

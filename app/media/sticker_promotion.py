@@ -93,6 +93,7 @@ class StickerPromotionService:
                     "source": "group_capture",
                     "source_group_ids": [group_id],
                     "scope_groups": [group_id],
+                    "media_id": media_id,
                 }
             )
             entries = [item for item in entries if item.id != sticker_id]

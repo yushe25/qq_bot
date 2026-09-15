@@ -21,6 +21,7 @@ from app.console.service import ConsoleService
 from app.logging_setup import configure_logging
 from app.media.inbound_ingest import InboundIngest
 from app.media.sticker_promotion import StickerPromotionService
+from app.memory.sticker_preferences import StickerPreferenceService
 from app.memory.store import MemoryStore
 from app.platform.gateway import NullGateway
 from app.platform.qq.onebot_client import OneBotV11Gateway
@@ -145,7 +146,12 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         audit=audit,
         promotion=promotion,
     )
-    sticker_context = StickerContextObserver(config.sticker.ingest, store)
+    sticker_preferences = StickerPreferenceService(store)
+    sticker_context = StickerContextObserver(
+        config.sticker.ingest,
+        store,
+        preferences=sticker_preferences,
+    )
     safety = SafetyPipeline(
         config.safety,
         whitelist,
@@ -156,7 +162,19 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         sticker_library,
         store=store,
     )
-    orchestrator = Orchestrator(provider, sessions, safety, memory, config, gateway, whitelist, bus, audit, sticker_library)
+    orchestrator = Orchestrator(
+        provider,
+        sessions,
+        safety,
+        memory,
+        config,
+        gateway,
+        whitelist,
+        bus,
+        audit,
+        sticker_library,
+        sticker_preferences=sticker_preferences,
+    )
     learning = LearningRunner(
         config=config,
         provider=provider,

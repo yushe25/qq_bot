@@ -40,6 +40,7 @@ class StickerManifestEntry(BaseModel):
     source: Literal["manual", "group_capture"] = "manual"
     source_group_ids: list[str] = Field(default_factory=list, max_length=20)
     scope_groups: list[str] = Field(default_factory=list, max_length=20)
+    media_id: int | None = None
 
     @field_validator("id")
     @classmethod

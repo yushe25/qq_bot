@@ -143,8 +143,17 @@ class StickerLibrary:
             if self._scene_allowed(self._entries.get(entry.sticker_id), scene_id)
         )
 
-    def catalog_text_for_scene(self, scene_id: str, max_chars: int = 4000) -> str:
-        return self._catalog_text(self.catalog_for_scene(scene_id), max_chars=max_chars)
+    def catalog_text_for_scene(
+        self,
+        scene_id: str,
+        max_chars: int = 4000,
+        experience_by_id: dict[str, str] | None = None,
+    ) -> str:
+        return self._catalog_text(
+            self.catalog_for_scene(scene_id),
+            max_chars=max_chars,
+            experience_by_id=experience_by_id,
+        )
 
     def resolve_for_scene(self, sticker_id: str, scene_id: str) -> StickerFile | None:
         entry = self._entries.get(sticker_id)
@@ -155,7 +164,13 @@ class StickerLibrary:
     def catalog_text(self, max_chars: int = 4000) -> str:
         return self._catalog_text(self.catalog(), max_chars=max_chars)
 
-    def _catalog_text(self, entries: tuple[StickerCatalogEntry, ...], *, max_chars: int) -> str:
+    def _catalog_text(
+        self,
+        entries: tuple[StickerCatalogEntry, ...],
+        *,
+        max_chars: int,
+        experience_by_id: dict[str, str] | None = None,
+    ) -> str:
         limit = max(0, int(max_chars))
         if limit == 0:
             return ""
@@ -173,6 +188,9 @@ class StickerLibrary:
                 fields.append("适合：" + "、".join(entry.scenes))
             if entry.avoid_scenes:
                 fields.append("不适合：" + "、".join(entry.avoid_scenes))
+            experience = (experience_by_id or {}).get(entry.sticker_id, "")
+            if experience:
+                fields.append("群内经验：" + experience)
             line = "- " + " | ".join(fields)
             separator = "\n" if lines else ""
             remaining = limit - used - len(separator)
@@ -186,6 +204,10 @@ class StickerLibrary:
                 lines.append(line[: remaining - 1] + "…")
             break
         return "\n".join(lines)
+
+    def media_id_for(self, sticker_id: str) -> int | None:
+        entry = self._entries.get(sticker_id)
+        return entry.media_id if entry is not None else None
 
     async def usage_count(self, sticker_id: str) -> int:
         base = 0

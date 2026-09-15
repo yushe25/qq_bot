@@ -14,6 +14,7 @@ from app.agent.tool_schemas import build_tool_schemas
 from app.agent.tools import ToolContext, execute_tool
 from app.config import AppConfig
 from app.domain.types import Session, SessionState, ToolCall, TriggerCategory, WakeInput, now_ms
+from app.memory.sticker_preferences import StickerPreferenceService
 from app.memory.store import MemoryStore
 from app.platform.gateway import QQGateway
 from app.platform.qq.event_normalizer import visible_name
@@ -53,6 +54,7 @@ class Orchestrator:
         bus: EventBus | None = None,
         audit: AuditLog | None = None,
         sticker_library: StickerLibrary | None = None,
+        sticker_preferences: StickerPreferenceService | None = None,
     ) -> None:
         self.provider = provider
         self.sessions = sessions
@@ -64,6 +66,7 @@ class Orchestrator:
         self.bus = bus
         self.audit = audit
         self.sticker_library = sticker_library
+        self.sticker_preferences = sticker_preferences
         self._no_action_counts: dict[str, int] = {}
 
     async def run_wake(self, session: Session, wake_input: WakeInput) -> WakeOutcome:
@@ -119,8 +122,26 @@ class Orchestrator:
             if library is not None and library.available
             else []
         )
+        experience_by_id: dict[str, str] = {}
+        if (
+            library is not None
+            and self.sticker_preferences is not None
+            and session.scene_type == "group"
+        ):
+            media_to_sticker = {
+                media_id: entry.sticker_id
+                for entry in library.catalog_for_scene(session.scene_id)
+                if (media_id := library.media_id_for(entry.sticker_id)) is not None
+            }
+            experience_by_id = await self.sticker_preferences.experience_for_group(
+                session.scene_id,
+                media_to_sticker,
+            )
         sticker_catalog = (
-            library.catalog_text_for_scene(session.scene_id)
+            library.catalog_text_for_scene(
+                session.scene_id,
+                experience_by_id=experience_by_id,
+            )
             if library is not None and sticker_ids
             else ""
         )

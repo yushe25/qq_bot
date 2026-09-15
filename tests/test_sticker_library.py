@@ -392,3 +392,25 @@ def test_sticker_library_can_explicitly_disable_same_group_only(tmp_path: Path) 
     )
 
     assert library.resolve_for_scene("auto-01", "200000") is not None
+
+
+def test_sticker_catalog_text_can_include_readable_group_experience(tmp_path: Path) -> None:
+    library = _library(
+        tmp_path,
+        [
+            {
+                "id": "mock-01",
+                "name": "无语猫",
+                "file": "images/mock-01.gif",
+                "approved": True,
+                "tags": ["无语"],
+            }
+        ],
+    )
+
+    text = library.catalog_text_for_scene(
+        "100000",
+        experience_by_id={"mock-01": "吐槽 +3；不适合安慰"},
+    )
+
+    assert "群内经验：吐槽 +3；不适合安慰" in text

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import secrets
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,14 @@ from pydantic import BaseModel
 from app.config import ConsoleConfig
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+WS_TICKET_TTL_SECONDS = 60
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
+
+
+@dataclass(frozen=True)
+class _WsTicket:
+    expires_at: float
+    client_host: str
 
 
 class WakeBody(BaseModel):
@@ -23,8 +32,9 @@ class WakeBody(BaseModel):
 def build_console_router(config: ConsoleConfig) -> APIRouter:
     router = APIRouter()
     require_auth = _make_auth_dependency(config)
+    ws_tickets: dict[str, _WsTicket] = {}
 
-    @router.get("/", response_class=HTMLResponse, dependencies=[Depends(require_auth)])
+    @router.get("/", response_class=HTMLResponse)
     async def console_page() -> str:
         page = PUBLIC_DIR / "console.html"
         if page.exists():
@@ -42,6 +52,14 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
             "uptimeSeconds": int(time.time() - runtime.started_at),
             "sessionCount": len(sessions),
             "activeSessions": sum(1 for session in sessions if str(session.state) in {"active", "waking"}),
+        }
+
+    @router.post("/api/ws-ticket", dependencies=[Depends(require_auth)])
+    async def issue_ws_ticket(request: Request) -> dict[str, Any]:
+        host = request.client.host if request.client else ""
+        return {
+            "ticket": _issue_ws_ticket(ws_tickets, host),
+            "expiresIn": WS_TICKET_TTL_SECONDS,
         }
 
     @router.get("/api/sessions", dependencies=[Depends(require_auth)])
@@ -145,8 +163,8 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
         return {"items": await runtime.store.list_wake_logs(session_id=session_id, limit=limit)}
 
     @router.websocket("/ws/live")
-    async def live(websocket: WebSocket, token: str | None = Query(default=None)) -> None:
-        if not _ws_allowed(config, websocket, token):
+    async def live(websocket: WebSocket, ticket: str | None = Query(default=None)) -> None:
+        if not _ws_allowed(config, ws_tickets, websocket, ticket):
             await websocket.close(code=1008)
             return
         await websocket.accept()
@@ -183,8 +201,7 @@ def _make_auth_dependency(
     async def require_auth(request: Request) -> None:
         if config.token:
             expected = f"Bearer {config.token}"
-            token = request.query_params.get("token")
-            if request.headers.get("authorization") != expected and token != config.token:
+            if request.headers.get("authorization") != expected:
                 raise HTTPException(status_code=401, detail="unauthorized")
             return
         host = request.client.host if request.client else ""
@@ -194,11 +211,48 @@ def _make_auth_dependency(
     return require_auth
 
 
-def _ws_allowed(config: ConsoleConfig, websocket: WebSocket, token: str | None) -> bool:
-    if config.token:
-        return token == config.token or websocket.headers.get("authorization") == f"Bearer {config.token}"
+def _ws_allowed(
+    config: ConsoleConfig,
+    tickets: dict[str, _WsTicket],
+    websocket: WebSocket,
+    ticket: str | None,
+) -> bool:
     host = websocket.client.host if websocket.client else ""
+    if config.token:
+        return _consume_ws_ticket(tickets, ticket, host)
     return host in LOOPBACK_HOSTS
+
+
+def _issue_ws_ticket(tickets: dict[str, _WsTicket], client_host: str) -> str:
+    now = time.time()
+    _prune_ws_tickets(tickets, now)
+    ticket = secrets.token_urlsafe(32)
+    tickets[ticket] = _WsTicket(
+        expires_at=now + WS_TICKET_TTL_SECONDS,
+        client_host=client_host,
+    )
+    return ticket
+
+
+def _consume_ws_ticket(
+    tickets: dict[str, _WsTicket],
+    ticket: str | None,
+    client_host: str,
+) -> bool:
+    if not ticket:
+        return False
+    record = tickets.pop(ticket, None)
+    return not (
+        record is None
+        or record.expires_at < time.time()
+        or record.client_host != client_host
+    )
+
+
+def _prune_ws_tickets(tickets: dict[str, _WsTicket], now: float) -> None:
+    for ticket, record in list(tickets.items()):
+        if record.expires_at < now:
+            tickets.pop(ticket, None)
 
 
 def _runtime(request: Request | WebSocket) -> Any:

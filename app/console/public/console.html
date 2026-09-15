@@ -136,7 +136,7 @@
 <body>
 <header>
   <div class="brand">QQF</div>
-  <div class="status"><span id="state-dot" class="dot"></span><span id="state-text">离线</span></div>
+  <div class="status"><span id="state-dot" class="dot"></span><span id="state-text">离线</span><button id="token-button" type="button">Token</button></div>
 </header>
 <main>
   <section class="stats">
@@ -182,9 +182,7 @@
 <script>
 const $ = (sel) => document.querySelector(sel);
 let ws = null;
-const urlToken = new URLSearchParams(location.search).get('token');
-if (urlToken) sessionStorage.setItem('qqfToken', urlToken);
-const token = sessionStorage.getItem('qqfToken');
+let token = sessionStorage.getItem('qqfToken') || '';
 
 function setOnline(on) {
   $('#state-dot').classList.toggle('on', on);
@@ -232,13 +230,24 @@ function badge(session) {
   return span;
 }
 
-async function api(path, options = {}) {
+function askToken() {
+  const entered = window.prompt('请输入控制台 Token');
+  if (!entered || !entered.trim()) return false;
+  token = entered.trim();
+  sessionStorage.setItem('qqfToken', token);
+  return true;
+}
+
+async function api(path, options = {}, retry = true) {
   const headers = { 'content-type': 'application/json' };
   if (token) headers.authorization = `Bearer ${token}`;
   options.headers = { ...headers, ...(options.headers || {}) };
   const res = await fetch(path, {
     ...options,
   });
+  if (res.status === 401 && retry && askToken()) {
+    return api(path, options, false);
+  }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -478,9 +487,19 @@ document.addEventListener('click', async (ev) => {
   }
 });
 
-function connect() {
+async function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const auth = token ? `?token=${encodeURIComponent(token)}` : '';
+  let auth = '';
+  if (token) {
+    try {
+      const data = await api('/api/ws-ticket', { method: 'POST', body: '{}' });
+      auth = `?ticket=${encodeURIComponent(data.ticket)}`;
+    } catch (err) {
+      setOnline(false);
+      setTimeout(connect, 3000);
+      return;
+    }
+  }
   const target = new WebSocket(`${proto}://${location.host}/ws/live${auth}`);
   target.onopen = () => setOnline(true);
   target.onclose = () => { setOnline(false); setTimeout(connect, 3000); };
@@ -495,6 +514,12 @@ function connect() {
 
 $('#wake-session').addEventListener('change', loadWakeLogs);
 $('#wake-refresh').addEventListener('click', loadWakeLogs);
+$('#token-button').addEventListener('click', () => {
+  if (!askToken()) return;
+  if (ws) ws.close();
+  refresh();
+  connect();
+});
 refresh();
 connect();
 setInterval(loadHealth, 10000);

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 
 def build_tool_schemas(
     *,
     allow_tools: bool = True,
     sticker_enabled: bool = False,
-) -> list[dict[str, object]]:
+    sticker_ids: Sequence[str] = (),
+) -> list[dict[str, Any]]:
     if not allow_tools:
         return []
-    schemas: list[dict[str, object]] = [
+    schemas: list[dict[str, Any]] = [
         {
             "type": "function",
             "function": {
@@ -114,16 +118,17 @@ def build_tool_schemas(
             },
         },
     ]
-    if sticker_enabled:
+    ids = [str(sticker_id).strip() for sticker_id in sticker_ids if str(sticker_id).strip()]
+    if sticker_enabled and ids:
         schemas.append(
             {
                 "type": "function",
                 "function": {
                     "name": "sticker_send",
-                    "description": "从白名单表情库发送表情包。",
+                    "description": "从上方语义目录选择一张表情发送；只能提交目录中的 stickerId，没有合适素材时不要调用。",
                     "parameters": {
                         "type": "object",
-                        "properties": {"stickerId": {"type": "string"}},
+                        "properties": {"stickerId": {"type": "string", "enum": ids}},
                         "required": ["stickerId"],
                     },
                 },

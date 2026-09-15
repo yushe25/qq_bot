@@ -3,10 +3,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-import yaml
-
+from app.agent.sticker_manifest import StickerManifestEntry, StickerManifestError, load_manifest
 from app.safety.media_guard import MediaGuard
 from app.storage.db import StateStore
 
@@ -17,6 +15,21 @@ class StickerFile:
     name: str
     path: Path
     tags: tuple[str, ...]
+    description: str = ""
+    moods: tuple[str, ...] = ()
+    scenes: tuple[str, ...] = ()
+    avoid_scenes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class StickerCatalogEntry:
+    sticker_id: str
+    name: str
+    description: str
+    tags: tuple[str, ...]
+    moods: tuple[str, ...]
+    scenes: tuple[str, ...]
+    avoid_scenes: tuple[str, ...]
 
 
 class StickerLibrary:
@@ -39,7 +52,7 @@ class StickerLibrary:
         )
         self.store = store
         self.error: str | None = None
-        self._entries: dict[str, dict[str, Any]] = {}
+        self._entries: dict[str, StickerManifestEntry] = {}
         self._load()
 
     def _load(self) -> None:
@@ -48,35 +61,11 @@ class StickerLibrary:
             self.error = "manifest.yaml 不存在"
             return
         try:
-            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            self.error = f"manifest.yaml 解析失败: {exc}"
+            entries = load_manifest(manifest_path)
+        except StickerManifestError as exc:
+            self.error = str(exc)
             return
-        if not isinstance(raw, list):
-            self.error = "manifest.yaml 必须是条目列表"
-            return
-        entries: dict[str, dict[str, Any]] = {}
-        for index, item in enumerate(raw):
-            if not isinstance(item, dict):
-                self.error = f"manifest.yaml 第 {index + 1} 条不是对象"
-                return
-            sticker_id = str(item.get("id", "")).strip()
-            if not sticker_id:
-                self.error = f"manifest.yaml 第 {index + 1} 条缺少 id"
-                return
-            if sticker_id in entries:
-                self.error = f"manifest.yaml id 重复: {sticker_id}"
-                return
-            file_value = item.get("file")
-            if not isinstance(file_value, str) or not file_value.strip():
-                self.error = f"表情 {sticker_id} 缺少 file"
-                return
-            file_path = Path(file_value)
-            if file_path.is_absolute() or ".." in file_path.parts:
-                self.error = f"表情 {sticker_id} 的 file 路径不合法"
-                return
-            entries[sticker_id] = dict(item)
-        self._entries = entries
+        self._entries = {entry.id: entry for entry in entries}
 
     @property
     def available(self) -> bool:
@@ -103,9 +92,9 @@ class StickerLibrary:
         ):
             return None
         entry = self._entries[sticker_id]
-        if entry.get("approved") is not True:
+        if not entry.approved:
             return None
-        target = (self.library_dir / str(entry["file"])).resolve()
+        target = (self.library_dir / entry.file).resolve()
         try:
             target.relative_to(self.library_dir)
         except ValueError:
@@ -115,19 +104,73 @@ class StickerLibrary:
         ok, _ = self.media_guard.check_file(target)
         if not ok:
             return None
-        tags = entry.get("tags") or []
         return StickerFile(
             sticker_id=sticker_id,
-            name=str(entry.get("name") or sticker_id),
+            name=entry.name or sticker_id,
             path=target,
-            tags=tuple(str(tag) for tag in tags),
+            tags=tuple(entry.tags),
+            description=entry.description,
+            moods=tuple(entry.moods),
+            scenes=tuple(entry.scenes),
+            avoid_scenes=tuple(entry.avoid_scenes),
         )
+
+    def catalog(self) -> tuple[StickerCatalogEntry, ...]:
+        entries: list[StickerCatalogEntry] = []
+        for sticker_id in self.list_ids():
+            sticker = self.resolve(sticker_id)
+            if sticker is None:
+                continue
+            entries.append(
+                StickerCatalogEntry(
+                    sticker_id=sticker.sticker_id,
+                    name=sticker.name,
+                    description=sticker.description,
+                    tags=sticker.tags,
+                    moods=sticker.moods,
+                    scenes=sticker.scenes,
+                    avoid_scenes=sticker.avoid_scenes,
+                )
+            )
+        return tuple(entries)
+
+    def catalog_text(self, max_chars: int = 4000) -> str:
+        limit = max(0, int(max_chars))
+        if limit == 0:
+            return ""
+        lines: list[str] = []
+        used = 0
+        for entry in self.catalog():
+            fields = [entry.sticker_id, entry.name]
+            if entry.tags:
+                fields.append("标签：" + "、".join(entry.tags))
+            if entry.description:
+                fields.append("说明：" + entry.description)
+            if entry.moods:
+                fields.append("情绪：" + "、".join(entry.moods))
+            if entry.scenes:
+                fields.append("适合：" + "、".join(entry.scenes))
+            if entry.avoid_scenes:
+                fields.append("不适合：" + "、".join(entry.avoid_scenes))
+            line = "- " + " | ".join(fields)
+            separator = "\n" if lines else ""
+            remaining = limit - used - len(separator)
+            if remaining <= 0:
+                break
+            if len(line) <= remaining:
+                lines.append(line)
+                used += len(separator) + len(line)
+                continue
+            if remaining > 1:
+                lines.append(line[: remaining - 1] + "…")
+            break
+        return "\n".join(lines)
 
     async def usage_count(self, sticker_id: str) -> int:
         base = 0
         entry = self._entries.get(sticker_id)
         if entry is not None:
-            base = int(entry.get("usage_count") or 0)
+            base = entry.usage_count
         if self.store is None:
             return base
         return base + await self.store.get_sticker_usage(sticker_id)

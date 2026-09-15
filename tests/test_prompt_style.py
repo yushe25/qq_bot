@@ -53,6 +53,28 @@ def test_scheduled_prompt_does_not_require_a_reply() -> None:
     assert "收到问候时直接回问候，不要问对方有什么事" not in prompt
 
 
+def test_sticker_catalog_adds_selection_rules_without_paths() -> None:
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    catalog = "- pilot-01 | 无语猫 | 标签：无语 | 说明：白猫翻白眼"
+
+    prompt = build_system_prompt(session, DEFAULT_PERSONA, sticker_catalog=catalog)
+
+    assert "可用表情目录：" in prompt
+    assert catalog in prompt
+    assert "没有明显合适的图时直接使用文字" in prompt
+    assert "每轮最多一张" in prompt
+    assert "images/" not in prompt
+
+
+def test_empty_sticker_catalog_does_not_add_selection_rules() -> None:
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+
+    prompt = build_system_prompt(session, DEFAULT_PERSONA, sticker_catalog="  ")
+
+    assert "可用表情目录：" not in prompt
+    assert "表情选择规则：" not in prompt
+
+
 def test_default_persona_identifies_as_lijiang_native() -> None:
     persona_path = Path(__file__).resolve().parents[1] / "personas" / "default.yaml"
 

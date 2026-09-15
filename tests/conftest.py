@@ -14,7 +14,6 @@ from app.runtime.bus import EventBus
 from app.runtime.learning import LearningRunner
 from app.runtime.orchestrator import Orchestrator
 from app.runtime.safety_pipeline import SafetyPipeline
-from app.runtime.schedule import ScheduleProfile
 from app.runtime.scheduler import Scheduler
 from app.runtime.session_manager import SessionManager
 from app.safety.audit import AuditLog
@@ -127,10 +126,6 @@ async def stack(tmp_path) -> AsyncIterator[TestStack]:
         bus=bus,
         audit=audit,
         sticker_library=sticker_library,
-    )
-    orchestrator.schedule_profile = ScheduleProfile(
-        sticker_only_probability=0.0,
-        sticker_with_text_probability=0.0,
     )
     learning = LearningRunner(
         config=config,

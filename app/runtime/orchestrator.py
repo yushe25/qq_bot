@@ -19,7 +19,6 @@ from app.platform.gateway import QQGateway
 from app.platform.qq.event_normalizer import visible_name
 from app.runtime.bus import EventBus
 from app.runtime.safety_pipeline import SafetyPipeline
-from app.runtime.schedule import load_schedule_profile
 from app.runtime.session_manager import SessionManager, trim_conversation
 from app.safety.audit import AuditLog
 from app.safety.whitelist import Whitelist
@@ -66,7 +65,6 @@ class Orchestrator:
         self.audit = audit
         self.sticker_library = sticker_library
         self._no_action_counts: dict[str, int] = {}
-        self.schedule_profile = load_schedule_profile(config.persona_path)
 
     async def run_wake(self, session: Session, wake_input: WakeInput) -> WakeOutcome:
         lock = self.sessions.lock(session.id)
@@ -115,6 +113,13 @@ class Orchestrator:
         seen_tool_results: set[tuple[str, str]] = set()
         provider_temperature = None if self.config.llm.providers else self.config.llm.temperature
         provider_max_tokens = None if self.config.llm.providers else self.config.llm.max_tokens
+        library = self.sticker_library
+        sticker_ids = (
+            [entry.sticker_id for entry in library.catalog()]
+            if library is not None and library.available
+            else []
+        )
+        sticker_catalog = library.catalog_text() if library is not None and sticker_ids else ""
 
         for step in range(self.config.scheduler.max_tool_steps):
             outcome.steps = step + 1
@@ -128,13 +133,13 @@ class Orchestrator:
                             learning_notes,
                             final_step=final_step,
                             wake_category=wake_input.category,
+                            sticker_catalog=sticker_catalog,
                         ),
                         messages=trim_conversation(conversation, history_limit),
                         tools=build_tool_schemas(
                             allow_tools=not final_step,
-                            sticker_enabled=(
-                                self.sticker_library is not None and self.sticker_library.available
-                            ),
+                            sticker_enabled=bool(sticker_ids),
+                            sticker_ids=sticker_ids,
                         ),
                         temperature=provider_temperature,
                         max_tokens=provider_max_tokens,
@@ -235,7 +240,6 @@ class Orchestrator:
                 ctx.outbox.append(self._plain_send(session, text))
             break
 
-        self._maybe_attach_sticker(session, ctx)
         send_results = await self.safety.execute_outbox(ctx, self.gateway)
         sent = sum(1 for item in send_results if item.get("ok"))
         outcome.sent = sent
@@ -298,33 +302,6 @@ class Orchestrator:
     def _publish(self, event_type: str, payload: dict[str, Any]) -> None:
         if self.bus:
             self.bus.publish({"type": event_type, **payload})
-
-    def _maybe_attach_sticker(self, session: Session, ctx: ToolContext) -> None:
-        library = self.sticker_library
-        if library is None or not library.available:
-            return
-        sticker_ids = library.list_ids()
-        if not sticker_ids or len(ctx.outbox) >= self.config.safety.max_sends_per_wake:
-            return
-        has_text = any(
-            str(item.get("type", "")) in {"send_group", "send_private"}
-            and str(item.get("message", ""))
-            for item in ctx.outbox
-        )
-        if has_text:
-            if random.random() >= self.schedule_profile.sticker_with_text_probability:
-                return
-        elif random.random() >= self.schedule_profile.sticker_only_probability:
-            return
-        item: dict[str, Any] = {"type": "send_sticker", "sticker_id": random.choice(sticker_ids)}
-        if session.scene_type == "group":
-            item["group_id"] = session.scene_id
-            item["user_id"] = None
-        else:
-            item["user_id"] = session.scene_id
-            item["group_id"] = None
-        ctx.outbox.append(item)
-
 
 def _tool_call_payload(call: ToolCall, call_id: str) -> dict[str, Any]:
     return {

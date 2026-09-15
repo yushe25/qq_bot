@@ -34,11 +34,17 @@ def test_tool_schemas_can_be_omitted_for_final_reply_and_keep_order() -> None:
     assert [_schema_function(item)["name"] for item in first] == [_schema_function(item)["name"] for item in second]
     assert build_tool_schemas(allow_tools=False) == []
     assert "sticker_send" not in [_schema_function(item)["name"] for item in first]
-    sticker_names = [
+    assert "sticker_send" not in [
         _schema_function(item)["name"]
         for item in build_tool_schemas(sticker_enabled=True)
     ]
-    assert "sticker_send" in sticker_names
+    sticker_schemas = build_tool_schemas(sticker_enabled=True, sticker_ids=["pilot-01", "pilot-02"])
+    sticker = next(_schema_function(item) for item in sticker_schemas if _schema_function(item)["name"] == "sticker_send")
+    parameters = cast(dict[str, Any], sticker["parameters"])
+    properties = cast(dict[str, Any], parameters["properties"])
+    sticker_id = cast(dict[str, Any], properties["stickerId"])
+    assert sticker_id["enum"] == ["pilot-01", "pilot-02"]
+    assert "没有合适素材时不要调用" in str(sticker["description"])
 
 
 def test_group_history_defaults_to_ten() -> None:

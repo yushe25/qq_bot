@@ -12,7 +12,6 @@ from app.domain.types import (
     WakeInput,
 )
 from app.runtime.orchestrator import _tool_result_text
-from app.runtime.schedule import DelayRange, ScheduleProfile
 from tests.conftest import TestStack
 
 
@@ -419,17 +418,27 @@ def test_tool_result_text_keeps_generic_data_bounded() -> None:
     assert len(text) <= 100
 
 
-async def test_wake_attaches_sticker_with_text_when_profile_allows(stack: TestStack, monkeypatch) -> None:
-    stack.orchestrator.schedule_profile = ScheduleProfile(
-        timezone="Asia/Shanghai",
-        active_windows=((0, 24),),
-        reply_delay=DelayRange(0, 0),
-        mention_delay=DelayRange(0, 0),
-        sticker_only_probability=0,
-        sticker_with_text_probability=1,
+async def test_wake_allows_text_and_one_model_selected_sticker(stack: TestStack) -> None:
+    stack.orchestrator.provider = _ScriptedProvider(
+        [
+            ChatResult(
+                kind="tool_calls",
+                calls=[
+                    ToolCall(
+                        name="qq_send_group_message",
+                        arguments={"groupId": "100000", "message": "懂了"},
+                        id="send-1",
+                    ),
+                    ToolCall(
+                        name="sticker_send",
+                        arguments={"stickerId": "mock-01"},
+                        id="sticker-1",
+                    ),
+                ],
+            ),
+            ChatResult(kind="text", content=""),
+        ]
     )
-    monkeypatch.setattr("app.runtime.orchestrator.random.random", lambda: 0.5)
-    monkeypatch.setattr("app.runtime.orchestrator.random.choice", lambda values: values[0])
     session = stack.sessions.ensure_session("group", "100000")
     wake = WakeInput(
         session_id=session.id,
@@ -440,26 +449,28 @@ async def test_wake_attaches_sticker_with_text_when_profile_allows(stack: TestSt
 
     outcome = await stack.orchestrator.run_wake(session, wake)
 
-    assert outcome.sent == 3
-    assert len(stack.gateway.sent) == 3
+    assert outcome.sent == 2
+    assert len(stack.gateway.sent) == 2
     assert any("sticker" in str(item) for item in stack.gateway.sent)
     assert any("text" in item for item in stack.gateway.sent)
 
 
-async def test_wake_sends_sticker_only_when_no_text_and_profile_allows(
-    stack: TestStack,
-    monkeypatch,
-) -> None:
-    stack.orchestrator.schedule_profile = ScheduleProfile(
-        timezone="Asia/Shanghai",
-        active_windows=((0, 24),),
-        reply_delay=DelayRange(0, 0),
-        mention_delay=DelayRange(0, 0),
-        sticker_only_probability=1,
-        sticker_with_text_probability=0,
+async def test_wake_allows_sticker_only_response(stack: TestStack) -> None:
+    stack.orchestrator.provider = _ScriptedProvider(
+        [
+            ChatResult(
+                kind="tool_calls",
+                calls=[
+                    ToolCall(
+                        name="sticker_send",
+                        arguments={"stickerId": "mock-01"},
+                        id="sticker-1",
+                    )
+                ],
+            ),
+            ChatResult(kind="text", content=""),
+        ]
     )
-    monkeypatch.setattr("app.runtime.orchestrator.random.random", lambda: 0.5)
-    monkeypatch.setattr("app.runtime.orchestrator.random.choice", lambda values: values[0])
     session = stack.sessions.ensure_session("group", "100000")
     wake = WakeInput(
         session_id=session.id,
@@ -475,17 +486,23 @@ async def test_wake_sends_sticker_only_when_no_text_and_profile_allows(
     assert session.state == SessionState.COOLDOWN
 
 
-async def test_wake_does_not_attach_sticker_when_disabled(stack: TestStack, monkeypatch) -> None:
+async def test_wake_does_not_send_sticker_when_disabled_even_if_provider_calls_tool(stack: TestStack) -> None:
     stack.sticker_library.enabled = False
-    stack.orchestrator.schedule_profile = ScheduleProfile(
-        timezone="Asia/Shanghai",
-        active_windows=((0, 24),),
-        reply_delay=DelayRange(0, 0),
-        mention_delay=DelayRange(0, 0),
-        sticker_only_probability=1,
-        sticker_with_text_probability=1,
+    stack.orchestrator.provider = _ScriptedProvider(
+        [
+            ChatResult(
+                kind="tool_calls",
+                calls=[
+                    ToolCall(
+                        name="sticker_send",
+                        arguments={"stickerId": "mock-01"},
+                        id="sticker-1",
+                    )
+                ],
+            ),
+            ChatResult(kind="text", content="普通回复"),
+        ]
     )
-    monkeypatch.setattr("app.runtime.orchestrator.random.random", lambda: 0.0)
     session = stack.sessions.ensure_session("group", "100000")
     wake = WakeInput(
         session_id=session.id,
@@ -498,3 +515,45 @@ async def test_wake_does_not_attach_sticker_when_disabled(stack: TestStack, monk
 
     assert outcome.sent > 0
     assert not any("sticker" in str(item) for item in stack.gateway.sent)
+
+
+async def test_wake_without_sticker_choice_sends_text_only(stack: TestStack) -> None:
+    stack.orchestrator.provider = _ScriptedProvider(
+        [ChatResult(kind="text", content="这轮就发文字")]
+    )
+    session = stack.sessions.ensure_session("group", "100000")
+    wake = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_mention_event(session.id),),
+    )
+
+    outcome = await stack.orchestrator.run_wake(session, wake)
+
+    assert outcome.sent > 0
+    assert not any("sticker" in str(item) for item in stack.gateway.sent)
+
+
+async def test_wake_injects_sticker_catalog_and_enum_without_paths(stack: TestStack) -> None:
+    provider = _ScriptedProvider([ChatResult(kind="text", content="收到")])
+    stack.orchestrator.provider = provider
+    session = stack.sessions.ensure_session("group", "100000")
+    wake = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.MENTION,
+        reason="消息中包含 @",
+        events=(_mention_event(session.id),),
+    )
+
+    await stack.orchestrator.run_wake(session, wake)
+
+    request = provider.requests[0]
+    sticker_schema = next(
+        item for item in request.tools if item.get("function", {}).get("name") == "sticker_send"
+    )
+    properties = sticker_schema["function"]["parameters"]["properties"]
+    assert properties["stickerId"]["enum"] == ["mock-01"]
+    assert "mock-01" in request.system
+    assert "无语猫" in request.system
+    assert "images/" not in request.system

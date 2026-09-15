@@ -233,6 +233,58 @@ async def test_sticker_send_rejects_unknown_sticker(stack: TestStack) -> None:
     assert context.outbox == []
 
 
+async def test_sticker_send_allows_only_one_sticker_per_turn(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+        sticker_library=stack.sticker_library,
+    )
+
+    first = await execute_tool(
+        context,
+        ToolCall(name="sticker_send", arguments={"stickerId": "mock-01"}),
+    )
+    second = await execute_tool(
+        context,
+        ToolCall(name="sticker_send", arguments={"stickerId": "mock-01"}),
+    )
+
+    assert first.success is True
+    assert second.success is False
+    assert "每轮最多一张" in second.message
+    assert len(context.outbox) == 1
+
+
+async def test_sticker_send_can_repeat_same_id_in_later_turn(stack: TestStack) -> None:
+    session = stack.sessions.ensure_session("group", "100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+        sticker_library=stack.sticker_library,
+    )
+
+    first = await execute_tool(
+        context,
+        ToolCall(name="sticker_send", arguments={"stickerId": "mock-01"}),
+    )
+    context.outbox.clear()
+    second = await execute_tool(
+        context,
+        ToolCall(name="sticker_send", arguments={"stickerId": "mock-01"}),
+    )
+
+    assert first.success is True
+    assert second.success is True
+    assert len(context.outbox) == 1
+
+
 async def test_sticker_send_fails_when_library_missing(stack: TestStack) -> None:
     session = stack.sessions.ensure_session("group", "100000")
     context = ToolContext(

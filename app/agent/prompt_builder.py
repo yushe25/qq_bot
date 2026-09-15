@@ -54,6 +54,7 @@ def build_system_prompt(
     *,
     final_step: bool = False,
     wake_category: TriggerCategory | None = None,
+    sticker_catalog: str = "",
 ) -> str:
     learning_section = ""
     if learning_notes.strip():
@@ -76,6 +77,20 @@ def build_system_prompt(
     if final_step:
         rules.append("这是最后一次模型调用，请直接输出最终短文本，不要再调用工具。")
     rule_text = "\n".join(f"{index}. {rule}" for index, rule in enumerate(rules, start=1))
+    sticker_section = ""
+    if sticker_catalog.strip():
+        sticker_section = f"""
+
+可用表情目录：
+{sticker_catalog.strip()}
+
+表情选择规则：
+- 只能选择上方列出的 stickerId。
+- 明显贴合语境时才发，不要每轮都发。
+- 可以只发表情，也可以文字加表情。
+- 每轮最多一张。
+- 没有明显合适的图时直接使用文字。
+"""
     return f"""
 你是一个 QQ 群成员。你要表现得像真人，不要表现得像客服。
 
@@ -83,6 +98,7 @@ def build_system_prompt(
 {learning_section}
 行为规则：
 {rule_text}
+{sticker_section}
 
 当前会话：{session.scene_type} {session.scene_id}
 """.strip()

@@ -253,3 +253,72 @@ async def test_sticker_usage_count_persists(tmp_path: Path) -> None:
         assert await library.usage_count("mock-01") == 4
     finally:
         await store.close()
+
+
+def test_sticker_catalog_only_contains_sendable_semantic_entries(tmp_path: Path) -> None:
+    root = tmp_path / "stickers"
+    _write_manifest(
+        root / "manifest.yaml",
+        [
+            {
+                "id": "pilot-01",
+                "name": "无语猫",
+                "file": "images/pilot-01.gif",
+                "approved": True,
+                "description": "白猫翻白眼",
+                "tags": ["无语", "猫"],
+                "moods": ["无语"],
+                "scenes": ["被吐槽时"],
+                "avoid_scenes": ["严肃道歉时"],
+            },
+            {
+                "id": "pending-01",
+                "name": "未审核",
+                "file": "images/pending-01.gif",
+                "approved": False,
+                "tags": ["测试"],
+            },
+            {
+                "id": "broken-01",
+                "name": "文件缺失",
+                "file": "images/missing.gif",
+                "approved": True,
+                "tags": ["测试"],
+            },
+        ],
+    )
+    _write_gif(root / "images" / "pilot-01.gif")
+
+    library = init_library(root, allowed_ids=("pilot-01", "pending-01", "broken-01"))
+
+    catalog = library.catalog()
+
+    assert [entry.sticker_id for entry in catalog] == ["pilot-01"]
+    assert catalog[0].description == "白猫翻白眼"
+    assert catalog[0].scenes == ("被吐槽时",)
+    assert "images/" not in library.catalog_text()
+    assert "无语猫" in library.catalog_text()
+
+
+def test_sticker_catalog_text_is_bounded_and_prioritizes_semantics(tmp_path: Path) -> None:
+    library = _library(
+        tmp_path,
+        [
+            {
+                "id": "mock-01",
+                "name": "无语猫",
+                "file": "images/mock-01.gif",
+                "approved": True,
+                "description": "白猫翻白眼",
+                "tags": ["无语", "敷衍"],
+                "scenes": ["被吐槽时"],
+                "avoid_scenes": ["严肃道歉时"],
+            }
+        ],
+    )
+
+    text = library.catalog_text(max_chars=24)
+
+    assert len(text) <= 24
+    assert text.startswith("- mock-01 | 无语猫")
+    assert "images/" not in text

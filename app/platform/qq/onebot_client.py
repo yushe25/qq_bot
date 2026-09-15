@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import ipaddress
 import json
 import logging
+import socket
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 from websockets.asyncio.client import ClientConnection, connect
 
 from app.config import QQConfig
+from app.domain.types import MessageSegment
 from app.platform.gateway import EventHandler
 from app.platform.qq.event_normalizer import normalize
 
@@ -161,6 +168,25 @@ class OneBotV11Gateway:
             raise RuntimeError(f"invalid message_id: {message_id}") from exc
         return _dict_result(await self._post("get_msg", {"message_id": message_id_int}))
 
+    async def fetch_image_segment(self, segment: MessageSegment, *, max_bytes: int) -> bytes:
+        if segment.kind not in {"image", "mface"}:
+            raise ValueError("segment is not an image")
+        data = segment.data
+        file_ref = str(data.get("file_id") or data.get("file") or "").strip()
+        if file_ref:
+            try:
+                result = await self._post("get_image", {"file": file_ref})
+                payload = _decode_image_result(result)
+                if payload:
+                    _enforce_size(payload, max_bytes)
+                    return payload
+            except Exception:  # noqa: BLE001 - fall back to URL when get_image is unsupported
+                logger.debug("OneBot get_image unavailable; trying URL fallback")
+        url = data.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise RuntimeError("image segment has no downloadable source")
+        return await _download_public_image(url, max_bytes=max_bytes, timeout=10.0)
+
     async def get_group_history(self, group_id: str, limit: int = 20, message_seq: int | None = None) -> list[dict[str, object]]:
         params: dict[str, Any] = {"group_id": int(group_id)}
         if message_seq is not None:
@@ -194,3 +220,92 @@ def _dict_list(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         return []
     return [dict(item) for item in value if isinstance(item, dict)]
+
+
+def _decode_image_result(value: object) -> bytes:
+    candidate: object = value
+    if isinstance(value, dict):
+        candidate = value.get("base64") or value.get("data") or value.get("file") or ""
+    if not isinstance(candidate, str) or not candidate:
+        return b""
+    text = candidate.strip()
+    if text.startswith("base64://"):
+        return _b64decode(text.removeprefix("base64://"))
+    if text.startswith("data:"):
+        _, _, payload = text.partition(",")
+        return _b64decode(payload)
+    path = Path(text)
+    if path.is_file():
+        return path.read_bytes()
+    try:
+        return _b64decode(text)
+    except ValueError:
+        return b""
+
+
+def _b64decode(value: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("invalid base64 image payload") from exc
+
+
+def _enforce_size(payload: bytes, max_bytes: int) -> None:
+    if len(payload) > max_bytes:
+        raise RuntimeError("image exceeds max_bytes")
+
+
+async def _download_public_image(url: str, *, max_bytes: int, timeout: float) -> bytes:
+    current = url
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        for _ in range(3):
+            await _validate_public_url(current)
+            async with client.stream("GET", current) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise RuntimeError("image redirect missing location")
+                    current = urljoin(current, location)
+                    continue
+                response.raise_for_status()
+                chunks: list[bytes] = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise RuntimeError("image exceeds max_bytes")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise RuntimeError("too many image redirects")
+
+
+async def _validate_public_url(url: str) -> None:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("image URL must use http or https")
+    host = parsed.hostname
+    if host.lower() == "localhost":
+        raise ValueError("private image URL rejected")
+    try:
+        direct = ipaddress.ip_address(host)
+    except ValueError:
+        direct = None
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    addresses = [direct] if direct is not None else await asyncio.to_thread(_resolve_host, host, port)
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("private image URL rejected")
+
+
+def _resolve_host(host: str, port: int) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        raise ValueError("image host resolution failed") from exc
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    for info in infos:
+        raw = info[4][0]
+        try:
+            addresses.append(ipaddress.ip_address(raw))
+        except ValueError:
+            continue
+    return addresses

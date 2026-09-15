@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import base64
 import json
+import struct
 from typing import Any
 
 import httpx
 import pytest
 
 from app.config import QQConfig
+from app.domain.types import MessageSegment
 from app.platform.qq.onebot_client import OneBotV11Gateway
 
 
@@ -226,3 +229,42 @@ async def test_get_group_members_accepts_members_field(monkeypatch: pytest.Monke
     result = await gateway.get_group_members("100000")
 
     assert result == members
+
+
+async def test_fetch_image_segment_prefers_get_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = b"GIF89a" + struct.pack("<HH", 1, 1) + b"\x00\x00\x00"
+    captured: dict[str, Any] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "status": "ok",
+                "retcode": 0,
+                "data": {"file": "base64://" + base64.b64encode(payload).decode("ascii")},
+            },
+        )
+
+    _patch_http_client(monkeypatch, httpx.MockTransport(handler))
+    gateway = OneBotV11Gateway(QQConfig())
+
+    result = await gateway.fetch_image_segment(
+        MessageSegment(kind="image", data={"file": "image-key"}),
+        max_bytes=1024,
+    )
+
+    assert result == payload
+    assert captured["path"] == "/get_image"
+    assert captured["body"] == {"file": "image-key"}
+
+
+async def test_fetch_image_segment_rejects_private_url_without_fetching() -> None:
+    gateway = OneBotV11Gateway(QQConfig())
+
+    with pytest.raises(ValueError, match="private image URL"):
+        await gateway.fetch_image_segment(
+            MessageSegment(kind="image", data={"url": "http://127.0.0.1/image.png"}),
+            max_bytes=1024,
+        )

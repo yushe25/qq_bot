@@ -20,8 +20,8 @@ async def test_new_database_records_initial_migration(tmp_path: Path) -> None:
     finally:
         await store.close()
 
-    assert rows == [(1, rows[0][1])]
-    assert isinstance(rows[0][1], str) and rows[0][1]
+    assert [row[0] for row in rows] == [1, 2]
+    assert all(isinstance(row[1], str) and row[1] for row in rows)
 
 
 async def test_legacy_database_migrates_with_backup_and_preserves_data(tmp_path: Path) -> None:
@@ -55,13 +55,15 @@ async def test_legacy_database_migrates_with_backup_and_preserves_data(tmp_path:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(wake_log)")}
         row = conn.execute("SELECT prompt_tokens, completion_tokens, total_tokens FROM wake_log").fetchone()
         versions = conn.execute("SELECT version FROM schema_migrations").fetchall()
+        tables = {item[0] for item in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.close()
     finally:
         await store.close()
 
     assert {"prompt_tokens", "completion_tokens", "total_tokens"} <= columns
     assert row == (0, 0, 0)
-    assert versions == [(1,)]
+    assert versions == [(1,), (2,)]
+    assert "inbound_media" in tables
     assert list((tmp_path / "backups").glob("legacy-*.db"))
 
 

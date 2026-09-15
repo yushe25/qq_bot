@@ -10,6 +10,7 @@ from typing import Any
 
 from app.config import AppConfig
 from app.domain.types import NormalizedEvent, Session, SessionState, TriggerCategory, WakeInput, now_ms
+from app.media.inbound_ingest import InboundIngest
 from app.memory.store import MemoryStore
 from app.runtime.bus import EventBus
 from app.runtime.learning import LearningRunner
@@ -80,6 +81,7 @@ class Scheduler:
         wake_limiter: RateLimiter,
         learning: LearningRunner | None = None,
         memory: MemoryStore | None = None,
+        inbound_ingest: InboundIngest | None = None,
     ) -> None:
         self.config = config
         self.sessions = sessions
@@ -90,6 +92,7 @@ class Scheduler:
         self.wake_limiter = wake_limiter
         self.learning = learning
         self.memory = memory
+        self.inbound_ingest = inbound_ingest
         self.dedupe = MessageDedupe()
         self._inbox: dict[str, list[NormalizedEvent]] = {}
         self._deadlines: dict[str, float] = {}
@@ -131,6 +134,11 @@ class Scheduler:
         ):
             return
         self._collect_observation(event)
+        if self.inbound_ingest is not None:
+            try:
+                await self.inbound_ingest.handle_event(event)
+            except Exception:
+                logger.exception("inbound media ingest failed for %s", event.session_id)
         session = self.sessions.ensure_session(scene_type, scene_id)
         session.last_message_at = now_ms()
         batch = self._inbox.setdefault(session.id, [])

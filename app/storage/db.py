@@ -144,6 +144,65 @@ CREATE INDEX IF NOT EXISTS idx_event_dedupe_expiry
     ON event_dedupe(expires_at);
 """
 
+_STICKER_INGEST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS inbound_media (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha256 TEXT NOT NULL UNIQUE,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    width INTEGER,
+    height INTEGER,
+    local_path TEXT NOT NULL,
+    status TEXT NOT NULL,
+    vision_provider TEXT,
+    tag_confidence REAL,
+    auto_approved INTEGER NOT NULL DEFAULT 0,
+    first_seen_at REAL NOT NULL,
+    reviewed_at REAL,
+    reviewed_by TEXT,
+    reject_reason TEXT
+);
+
+CREATE TABLE IF NOT EXISTS inbound_media_groups (
+    media_id INTEGER NOT NULL,
+    group_id TEXT NOT NULL,
+    first_seen_at REAL NOT NULL,
+    last_seen_at REAL NOT NULL,
+    seen_count INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (media_id, group_id)
+);
+
+CREATE TABLE IF NOT EXISTS sticker_context_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id INTEGER NOT NULL,
+    group_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    observed_at REAL NOT NULL,
+    before_context_json TEXT NOT NULL,
+    after_context_json TEXT NOT NULL DEFAULT '[]',
+    situation_tags_json TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL,
+    UNIQUE (source_message_id, media_id)
+);
+
+CREATE TABLE IF NOT EXISTS sticker_preferences (
+    media_id INTEGER NOT NULL,
+    group_id TEXT NOT NULL,
+    situation_tag TEXT NOT NULL,
+    positive_score REAL NOT NULL DEFAULT 0,
+    negative_score REAL NOT NULL DEFAULT 0,
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    last_updated_at REAL NOT NULL,
+    PRIMARY KEY (media_id, group_id, situation_tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inbound_media_status ON inbound_media(status, first_seen_at);
+CREATE INDEX IF NOT EXISTS idx_media_groups_group ON inbound_media_groups(group_id, last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_context_group_time ON sticker_context_observations(group_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_preferences_group_score ON sticker_preferences(group_id, positive_score);
+"""
+
 _UPSERT_SESSION_SQL = """
 INSERT INTO sessions (
     id, scene_type, scene_id, state, persona_id,
@@ -654,6 +713,70 @@ class StateStore:
             (sticker_id, delta, now_ms(), delta),
         )
 
+    async def get_inbound_media_by_hash(self, sha256: str) -> dict[str, Any] | None:
+        rows = await self._query("SELECT * FROM inbound_media WHERE sha256 = ?", (sha256,))
+        return rows[0] if rows else None
+
+    async def upsert_inbound_media(
+        self,
+        *,
+        sha256: str,
+        mime_type: str,
+        byte_size: int,
+        width: int | None,
+        height: int | None,
+        local_path: str,
+        status: str,
+        vision_provider: str | None = None,
+        tag_confidence: float | None = None,
+        auto_approved: bool = False,
+        first_seen_at: float | None = None,
+    ) -> int:
+        async with self._lock:
+            conn = self._connection()
+            return await asyncio.to_thread(
+                _upsert_inbound_media_sync,
+                conn,
+                sha256,
+                mime_type,
+                byte_size,
+                width,
+                height,
+                local_path,
+                status,
+                vision_provider,
+                tag_confidence,
+                auto_approved,
+                first_seen_at if first_seen_at is not None else now_ms(),
+            )
+
+    async def touch_inbound_media_group(self, media_id: int, group_id: str, seen_at: float | None = None) -> None:
+        timestamp = seen_at if seen_at is not None else now_ms()
+        await self._execute(
+            """
+            INSERT INTO inbound_media_groups (
+                media_id, group_id, first_seen_at, last_seen_at, seen_count
+            ) VALUES (?, ?, ?, ?, 1)
+            ON CONFLICT(media_id, group_id) DO UPDATE SET
+                last_seen_at = excluded.last_seen_at,
+                seen_count = seen_count + 1
+            """,
+            (media_id, group_id, timestamp, timestamp),
+        )
+
+    async def inbound_media_group_stats(self, group_id: str) -> dict[str, Any]:
+        rows = await self._query(
+            """
+            SELECT COUNT(*) AS item_count, COALESCE(SUM(m.byte_size), 0) AS byte_size
+            FROM inbound_media_groups g
+            JOIN inbound_media m ON m.id = g.media_id
+            WHERE g.group_id = ?
+            """,
+            (group_id,),
+        )
+        row = rows[0] if rows else {"item_count": 0, "byte_size": 0}
+        return {"item_count": int(row["item_count"]), "byte_size": int(row["byte_size"])}
+
     async def get_daily_send_count(self, session_id: str, day: str) -> int:
         rows = await self._query(
             "SELECT count FROM daily_send_counts WHERE session_id = ? AND day = ?",
@@ -804,6 +927,59 @@ def _increment_pending_wake_attempts_sync(conn: sqlite3.Connection, session_id: 
         raise
 
 
+def _upsert_inbound_media_sync(
+    conn: sqlite3.Connection,
+    sha256: str,
+    mime_type: str,
+    byte_size: int,
+    width: int | None,
+    height: int | None,
+    local_path: str,
+    status: str,
+    vision_provider: str | None,
+    tag_confidence: float | None,
+    auto_approved: bool,
+    first_seen_at: float,
+) -> int:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            INSERT INTO inbound_media (
+                sha256, mime_type, byte_size, width, height, local_path, status,
+                vision_provider, tag_confidence, auto_approved, first_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sha256) DO UPDATE SET
+                mime_type = excluded.mime_type,
+                byte_size = excluded.byte_size,
+                width = excluded.width,
+                height = excluded.height,
+                local_path = excluded.local_path
+            """,
+            (
+                sha256,
+                mime_type,
+                byte_size,
+                width,
+                height,
+                local_path,
+                status,
+                vision_provider,
+                tag_confidence,
+                int(auto_approved),
+                first_seen_at,
+            ),
+        )
+        row = conn.execute("SELECT id FROM inbound_media WHERE sha256 = ?", (sha256,)).fetchone()
+        conn.execute("COMMIT")
+        if row is None:
+            raise RuntimeError("inbound_media upsert did not return an id")
+        return int(row["id"])
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 def _claim_event_sync(conn: sqlite3.Connection, key: str, now_s: float, ttl_seconds: int) -> bool:
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -872,14 +1048,23 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
 
 
 def _apply_initial_schema(conn: sqlite3.Connection) -> None:
-    for statement in _SCHEMA.split(";"):
+    _execute_schema_statements(conn, _SCHEMA)
+    _migrate_schema(conn)
+
+
+def _apply_sticker_ingest_schema(conn: sqlite3.Connection) -> None:
+    _execute_schema_statements(conn, _STICKER_INGEST_SCHEMA)
+
+
+def _execute_schema_statements(conn: sqlite3.Connection, schema: str) -> None:
+    for statement in schema.split(";"):
         if statement.strip():
             conn.execute(statement)
-    _migrate_schema(conn)
 
 
 _MIGRATIONS = (
     Migration(version=1, name="initial_schema", apply=_apply_initial_schema),
+    Migration(version=2, name="sticker_ingest", apply=_apply_sticker_ingest_schema),
 )
 
 

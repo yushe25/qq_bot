@@ -36,6 +36,15 @@ class MediaGuard:
             return False, "不支持的图片格式"
         return self.check_metadata(size, width, height)
 
+    def check_bytes(self, data: bytes) -> tuple[bool, str]:
+        size = len(data)
+        if size <= 0:
+            return False, "空文件"
+        width, height = _image_dimensions(data[:4096])
+        if width is None or height is None:
+            return False, "不支持的图片格式"
+        return self.check_metadata(size, width, height)
+
 
 def _image_dimensions(header: bytes) -> tuple[int | None, int | None]:
     if header.startswith((b"GIF87a", b"GIF89a")) and len(header) >= 10:
@@ -44,6 +53,8 @@ def _image_dimensions(header: bytes) -> tuple[int | None, int | None]:
         return _unpack_be(header[16:20]), _unpack_be(header[20:24])
     if header.startswith(b"\xff\xd8"):
         return _jpeg_dimensions(header)
+    if header.startswith(b"RIFF") and len(header) >= 30 and header[8:12] == b"WEBP":
+        return _webp_dimensions(header)
     return None, None
 
 
@@ -87,4 +98,22 @@ def _jpeg_dimensions(header: bytes) -> tuple[int | None, int | None]:
         if length < 2:
             return None, None
         index += 2 + length
+    return None, None
+
+
+def _webp_dimensions(header: bytes) -> tuple[int | None, int | None]:
+    chunk = header[12:16]
+    if chunk == b"VP8X" and len(header) >= 30:
+        width = int.from_bytes(header[24:27], "little") + 1
+        height = int.from_bytes(header[27:30], "little") + 1
+        return width, height
+    if chunk == b"VP8L" and len(header) >= 25 and header[20] == 0x2F:
+        raw = int.from_bytes(header[21:25], "little")
+        width = (raw & 0x3FFF) + 1
+        height = ((raw >> 14) & 0x3FFF) + 1
+        return width, height
+    if chunk == b"VP8 " and len(header) >= 30 and header[23:26] == b"\x9d\x01\x2a":
+        width = int.from_bytes(header[26:28], "little") & 0x3FFF
+        height = int.from_bytes(header[28:30], "little") & 0x3FFF
+        return width, height
     return None, None

@@ -17,6 +17,7 @@ from app.config import AppConfig
 from app.console.router import build_console_router
 from app.console.service import ConsoleService
 from app.logging_setup import configure_logging
+from app.media.inbound_ingest import InboundIngest
 from app.memory.store import MemoryStore
 from app.platform.gateway import NullGateway
 from app.platform.qq.onebot_client import OneBotV11Gateway
@@ -107,6 +108,15 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         enabled=config.sticker.enabled,
         allowed_ids=config.sticker.allowed_ids,
         store=store,
+        same_group_only=config.sticker.ingest.same_group_only,
+    )
+    inbound_ingest = InboundIngest(
+        config.sticker_dir,
+        config.sticker.ingest,
+        config.safety,
+        gateway,
+        store,
+        audit=audit,
     )
     safety = SafetyPipeline(
         config.safety,
@@ -139,6 +149,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         wake_limiter,
         learning=learning,
         memory=memory,
+        inbound_ingest=inbound_ingest,
     )
     return AppRuntime(
         config=config,

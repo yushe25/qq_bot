@@ -320,8 +320,20 @@ python scripts/onebot_check.py
 - `DELETE /api/sessions/{id}/learning-members/{member_id}`：删除某成员相关学习数据
 - `DELETE /api/sessions/{id}/learning`：清空该会话的学习数据
 - `GET /api/audit`、`GET /api/wake-logs`
+- `GET /api/stickers/review?limit=10&cursor=`：跨白名单群分页汇总待审核素材；传入
+  `groupId` 时只查看指定群
+- `GET /api/stickers/{media_id}/preview`：通过 Bearer 鉴权读取素材预览
+- `PATCH /api/stickers/{media_id}/metadata`：修改名称、说明、标签、情绪、适合场景和避免场景
+- `POST /api/stickers/{media_id}/approve`、`/reject`：按 `(media_id, groupId)` 批准或拒绝
+- `GET /api/logs?type=all&limit=20&cursor=`：合并分页查询唤醒日志与审计日志；`type` 可为
+  `all`、`wake`、`audit`
 - `POST /api/ws-ticket`：申请一次性 WebSocket ticket，有效期 60 秒且只能使用一次
 - `WS /ws/live`：实时事件流
+
+控制台页面按“顶部状态栏、统计卡片、会话列表与实时事件、素材审核工作台、日志时间线”
+排列。素材审核默认跨群显示 10 条并滚动加载；审批后会保位刷新。图片预览通过带 Bearer
+Header 的 `fetch` 转成 Object URL，长期 Token 不进入图片 URL。日志时间线默认显示 20 条，
+可在全部、唤醒日志和审计日志之间切换。
 
 默认只允许本机访问。未配置 `console.token` 时，只有来自回环地址（`127.0.0.1`、`::1`、
 `localhost`）的请求被放行，其他来源一律返回 `401 loophole blocked`；此模式下本机上的任何

@@ -118,6 +118,9 @@ async def test_wake_sends_message_and_enters_cooldown(stack: TestStack) -> None:
     assert session.state == SessionState.COOLDOWN
     assert session.cooldown_until > 0
     assert session.conversation[-1]["role"] == "assistant"
+    assert outcome.timings["provider_started_at"] <= outcome.timings["provider_finished_at"]
+    assert outcome.timings["safety_started_at"] <= outcome.timings["first_send_at"]
+    assert outcome.timings["first_send_at"] <= outcome.timings["last_send_at"]
 
 
 async def test_mock_wake_writes_memory_and_injects_it_on_next_wake(stack: TestStack) -> None:
@@ -231,6 +234,7 @@ async def test_llm_failure_is_audited(stack: TestStack) -> None:
     outcome = await stack.orchestrator.run_wake(session, wake)
 
     assert outcome.error == "upstream down"
+    assert outcome.timings["provider_started_at"] <= outcome.timings["provider_finished_at"]
     audits = await stack.store.list_audit(limit=50)
     assert any(item["action"] == "llm_complete_failed" and "upstream down" in item["result"] for item in audits)
 

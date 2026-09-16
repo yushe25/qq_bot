@@ -85,7 +85,14 @@ class SafetyPipeline:
         )
         return True
 
-    async def execute_outbox(self, ctx: ToolContext, gateway: QQGateway) -> list[dict[str, Any]]:
+    async def execute_outbox(
+        self,
+        ctx: ToolContext,
+        gateway: QQGateway,
+        timings: dict[str, float] | None = None,
+    ) -> list[dict[str, Any]]:
+        timing_data = timings if timings is not None else {}
+        timing_data.setdefault("safety_started_at", now_ms())
         results: list[dict[str, Any]] = []
         sent_count = 0
         member_counts: dict[str, int] = {}
@@ -99,6 +106,7 @@ class SafetyPipeline:
                     sent_count,
                     member_counts,
                     member_ids,
+                    timing_data,
                 )
                 results.append(result)
                 if result.get("ok"):
@@ -224,6 +232,7 @@ class SafetyPipeline:
                         )
                         results.append({"ok": False, "action": action_type, "reason": str(exc)})
                         continue
+                    self._record_send_timing(timing_data)
                     await self._increment_daily_send(ctx.session.id)
                     self._publish("outgoing", {"session_id": ctx.session.id, "scene_id": scene_id, "text": text})
                     results.append({"ok": True, "action": action_type, "group_id": scene_id})
@@ -266,6 +275,7 @@ class SafetyPipeline:
                         )
                         results.append({"ok": False, "action": action_type, "reason": str(exc)})
                         continue
+                    self._record_send_timing(timing_data)
                     await self._increment_daily_send(ctx.session.id)
                     self._publish("outgoing", {"session_id": ctx.session.id, "scene_id": scene_id, "text": text})
                     results.append({"ok": True, "action": action_type, "user_id": scene_id})
@@ -281,6 +291,7 @@ class SafetyPipeline:
         sent_count: int,
         member_counts: dict[str, int],
         member_ids: dict[str, set[str]],
+        timings: dict[str, float],
     ) -> dict[str, Any]:
         action = "sticker_send"
         if item.get("group_id") is not None:
@@ -348,6 +359,7 @@ class SafetyPipeline:
                 session_id=ctx.session.id,
             )
             return {"ok": False, "action": "send_sticker", "reason": str(exc)}
+        self._record_send_timing(timings)
         await self.sticker_library.record_usage(sticker_id)
         await self._increment_daily_send(ctx.session.id)
         self._publish(
@@ -452,6 +464,11 @@ class SafetyPipeline:
     def _publish(self, event_type: str, payload: dict[str, Any]) -> None:
         if self.bus:
             self.bus.publish({"type": event_type, **payload})
+
+    def _record_send_timing(self, timings: dict[str, float]) -> None:
+        timestamp = now_ms()
+        timings.setdefault("first_send_at", timestamp)
+        timings["last_send_at"] = timestamp
 
     async def _increment_daily_send(self, session_id: str) -> None:
         if self.store is not None:

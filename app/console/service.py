@@ -374,7 +374,7 @@ def _context_item(row: dict[str, Any]) -> dict[str, object]:
 def _merged_log_item(row: dict[str, Any]) -> dict[str, object]:
     log_type = str(row["type"])
     source_id = int(row["source_id"])
-    return {
+    item: dict[str, object] = {
         "id": f"{log_type}:{source_id}",
         "type": log_type,
         "timestamp": float(row["timestamp"]),
@@ -383,6 +383,25 @@ def _merged_log_item(row: dict[str, Any]) -> dict[str, object]:
         "result": str(row.get("result") or ""),
         "detail": str(row.get("detail") or ""),
     }
+    if log_type == "wake":
+        item["timings"] = _timings(row.get("timings_json"))
+    return item
+
+
+def _timings(value: object) -> dict[str, float]:
+    if not isinstance(value, str):
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    timings: dict[str, float] = {}
+    for key, raw in parsed.items():
+        if isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(float(raw)):
+            timings[str(key)] = float(raw)
+    return timings
 
 
 def _encode_log_cursor(timestamp: float, source_priority: int, source_id: int) -> str:

@@ -252,6 +252,10 @@ CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp
     ON audit_logs(timestamp DESC, id DESC);
 """
 
+_WAKE_TIMING_SCHEMA = """
+ALTER TABLE wake_log ADD COLUMN timings_json TEXT NOT NULL DEFAULT '{}';
+"""
+
 _UPSERT_SESSION_SQL = """
 INSERT INTO sessions (
     id, scene_type, scene_id, state, persona_id,
@@ -731,6 +735,30 @@ class StateStore:
             ),
         )
 
+    async def update_latest_wake_log_timings(
+        self,
+        session_id: str,
+        timings: dict[str, float],
+    ) -> None:
+        payload = json.dumps(
+            {key: float(value) for key, value in timings.items()},
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
+        await self._execute(
+            """
+            UPDATE wake_log
+            SET timings_json = ?
+            WHERE id = (
+                SELECT id FROM wake_log
+                WHERE session_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            """,
+            (payload, session_id),
+        )
+
     async def list_wake_logs(
         self,
         session_id: str | None = None,
@@ -758,7 +786,7 @@ class StateStore:
                 """
                 SELECT 'wake' AS type, id AS source_id, created_at AS timestamp,
                        0 AS source_priority, session_id, category AS title,
-                       decided AS result, reason AS detail
+                       decided AS result, reason AS detail, timings_json
                 FROM wake_log
                 """
             )
@@ -767,7 +795,7 @@ class StateStore:
                 """
                 SELECT 'audit' AS type, id AS source_id, timestamp AS timestamp,
                        1 AS source_priority, session_id, action AS title,
-                       result AS result, detail AS detail
+                       result AS result, detail AS detail, '{}' AS timings_json
                 FROM audit_logs
                 """
             )
@@ -1561,6 +1589,10 @@ def _apply_log_pagination_schema(conn: sqlite3.Connection) -> None:
     _execute_schema_statements(conn, _LOG_PAGINATION_SCHEMA)
 
 
+def _apply_wake_timing_schema(conn: sqlite3.Connection) -> None:
+    _execute_schema_statements(conn, _WAKE_TIMING_SCHEMA)
+
+
 def _execute_schema_statements(conn: sqlite3.Connection, schema: str) -> None:
     for statement in schema.split(";"):
         if statement.strip():
@@ -1577,6 +1609,7 @@ _MIGRATIONS = (
         apply=_apply_sticker_ingest_group_review_schema,
     ),
     Migration(version=5, name="log_pagination_indexes", apply=_apply_log_pagination_schema),
+    Migration(version=6, name="wake_timing", apply=_apply_wake_timing_schema),
 )
 
 

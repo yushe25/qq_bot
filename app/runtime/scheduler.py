@@ -100,6 +100,7 @@ class Scheduler:
         self._inbox: dict[str, list[NormalizedEvent]] = {}
         self._deadlines: dict[str, float] = {}
         self._pending_wakes: dict[str, WakeInput] = {}
+        self._wake_timings: dict[str, dict[str, float]] = {}
         self._pending_observations: dict[str, list[NormalizedEvent]] = {}
         self._running: set[str] = set()
         self._stopped = False
@@ -371,14 +372,32 @@ class Scheduler:
     def _dispatch(self, session: Session, wake: WakeInput) -> None:
         if session.id in self._running:
             return
+        timings = self._wake_timings.setdefault(
+            session.id,
+            {
+                "received_at": _received_at(wake),
+                "batch_ready_at": now_ms(),
+            },
+        )
+        timings["dispatch_at"] = now_ms()
         self._running.add(session.id)
         self._publish("wake", {"session_id": session.id, "category": wake.category.value, "reason": wake.reason})
-        task = asyncio.create_task(self._run_wake(session, wake))
+        task = asyncio.create_task(self._run_wake(session, wake, timings))
         task.add_done_callback(self._task_done)
 
-    async def _run_wake(self, session: Session, wake: WakeInput) -> None:
+    async def _run_wake(
+        self,
+        session: Session,
+        wake: WakeInput,
+        timings: dict[str, float] | None = None,
+    ) -> None:
+        timing_data = timings if timings is not None else {
+            "received_at": _received_at(wake),
+            "batch_ready_at": now_ms(),
+            "dispatch_at": now_ms(),
+        }
         try:
-            outcome = await self.orchestrator.run_wake(session, wake)
+            outcome = await self.orchestrator.run_wake(session, wake, timing_data)
             try:
                 await self.store.update_latest_wake_log_usage(
                     session_id=session.id,
@@ -388,8 +407,16 @@ class Scheduler:
                 )
             except Exception:
                 logger.exception("failed to record token usage for %s", session.id)
+            try:
+                await self.store.update_latest_wake_log_timings(session.id, timing_data)
+            except Exception:
+                logger.exception("failed to record wake timings for %s", session.id)
             await self.store.delete_pending_wake(session.id)
         except Exception:
+            try:
+                await self.store.update_latest_wake_log_timings(session.id, timing_data)
+            except Exception:
+                logger.exception("failed to record failed wake timings for %s", session.id)
             logger.exception("wake failed for %s", session.id)
             attempts = await self.store.increment_pending_wake_attempts(session.id)
             if attempts <= 0:
@@ -417,6 +444,7 @@ class Scheduler:
                 )
         finally:
             self._running.discard(session.id)
+            self._wake_timings.pop(session.id, None)
             current = self.sessions.get(session.id)
             if current is not None:
                 self._publish("session-updated", {"session": current.to_dict()})
@@ -478,3 +506,8 @@ class Scheduler:
 def _split_session(session_id: str) -> tuple[str, str]:
     scene_type, _, scene_id = session_id.partition(":")
     return scene_type or "group", scene_id or session_id
+
+
+def _received_at(wake: WakeInput) -> float:
+    timestamps = [float(event.timestamp) for event in wake.events if event.timestamp > 0]
+    return min(timestamps) if timestamps else now_ms()

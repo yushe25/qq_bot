@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 
 from app.agent.llm_provider import ChatRequest, ChatResult
@@ -610,6 +611,11 @@ async def test_wake_records_provider_token_usage(stack: TestStack) -> None:
     assert usage_log["prompt_tokens"] == 41
     assert usage_log["completion_tokens"] == 5
     assert usage_log["total_tokens"] == 46
+    timings = json.loads(str(usage_log["timings_json"]))
+    assert timings["received_at"] <= timings["batch_ready_at"] <= timings["dispatch_at"]
+    assert timings["provider_started_at"] <= timings["provider_finished_at"]
+    assert timings["first_send_at"] <= timings["last_send_at"]
+    assert "收到" not in str(usage_log["timings_json"])
 
 
 async def test_token_usage_log_failure_does_not_block_wake(stack: TestStack, monkeypatch) -> None:

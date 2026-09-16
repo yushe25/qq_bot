@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from app.agent.llm_provider import ChatRequest, LLMProvider
@@ -39,6 +39,7 @@ class WakeOutcome:
     completion_tokens: int = 0
     total_tokens: int = 0
     error: str | None = None
+    timings: dict[str, float] = field(default_factory=dict)
 
 
 class Orchestrator:
@@ -69,15 +70,27 @@ class Orchestrator:
         self.sticker_preferences = sticker_preferences
         self._no_action_counts: dict[str, int] = {}
 
-    async def run_wake(self, session: Session, wake_input: WakeInput) -> WakeOutcome:
+    async def run_wake(
+        self,
+        session: Session,
+        wake_input: WakeInput,
+        timings: dict[str, float] | None = None,
+    ) -> WakeOutcome:
         lock = self.sessions.lock(session.id)
         if lock.locked() or session.state == SessionState.ACTIVE:
-            return WakeOutcome(session.id, error="session busy")
+            return WakeOutcome(session.id, error="session busy", timings=timings or {})
         async with lock:
-            return await self._run_locked(session, wake_input)
+            return await self._run_locked(session, wake_input, timings)
 
-    async def _run_locked(self, session: Session, wake_input: WakeInput) -> WakeOutcome:
-        outcome = WakeOutcome(session.id)
+    async def _run_locked(
+        self,
+        session: Session,
+        wake_input: WakeInput,
+        timings: dict[str, float] | None = None,
+    ) -> WakeOutcome:
+        timing_data = timings if timings is not None else {}
+        timing_data.setdefault("dispatch_at", now_ms())
+        outcome = WakeOutcome(session.id, timings=timing_data)
         await self.sessions.set_state(session, SessionState.ACTIVE)
         started_ms = now_ms()
         persona = load_persona(self.config.persona_path)
@@ -150,6 +163,7 @@ class Orchestrator:
             outcome.steps = step + 1
             final_step = step >= self.config.scheduler.max_tool_steps - 1
             try:
+                timing_data.setdefault("provider_started_at", now_ms())
                 result = await self.provider.complete(
                     ChatRequest(
                         system=build_system_prompt(
@@ -172,6 +186,7 @@ class Orchestrator:
                 )
                 _accumulate_usage(outcome, result)
             except Exception as exc:  # noqa: BLE001 - provider boundary; surface any failure as a wake error
+                timing_data["provider_finished_at"] = now_ms()
                 outcome.error = str(exc)
                 logger.warning("LLM failed for %s: %s", session.id, exc)
                 if self.audit:
@@ -184,6 +199,7 @@ class Orchestrator:
                     )
                 self._publish("agent-error", {"session_id": session.id, "error": str(exc), "step": step + 1})
                 break
+            timing_data["provider_finished_at"] = now_ms()
 
             if result.kind == "tool_calls":
                 conversation.append({"role": "assistant", "content": result.content})
@@ -197,7 +213,9 @@ class Orchestrator:
                 ]
                 conversation[-1]["tool_calls"] = conversations
                 for index, call in enumerate(result.calls):
+                    timing_data.setdefault("tool_started_at", now_ms())
                     call_result = await execute_tool(ctx, call)
+                    timing_data["tool_finished_at"] = now_ms()
                     call_id = call_ids[index]
                     result_text = _tool_result_text(
                         call.name,
@@ -265,7 +283,7 @@ class Orchestrator:
                 ctx.outbox.append(self._plain_send(session, text))
             break
 
-        send_results = await self.safety.execute_outbox(ctx, self.gateway)
+        send_results = await self.safety.execute_outbox(ctx, self.gateway, timing_data)
         sent = sum(1 for item in send_results if item.get("ok"))
         outcome.sent = sent
 

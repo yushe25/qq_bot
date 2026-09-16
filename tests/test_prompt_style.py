@@ -16,6 +16,8 @@ def test_system_prompt_enforces_reply_punctuation_style() -> None:
     prompt = build_system_prompt(session, DEFAULT_PERSONA)
 
     assert "说话不用“，”" in prompt
+    assert "使用换行或句号分隔" in prompt
+    assert "不要用一个空格代替逗号" in prompt
     assert "标点只用“！”、“？”这类表达情绪的标点" in prompt
     assert "“...”用来表达无语" in prompt
     assert prompt.count("说话不用") == 1

@@ -266,13 +266,16 @@ python scripts/onebot_check.py
 | `llm.allowFallback` | 是否启用自动降级 | `true` |
 | `llm.baseUrl` / `llm.model` | 旧版扁平 OpenAI 兼容配置 | 本地地址 / `qwen2.5-32b` |
 | `llm.extraHeaders` | 额外请求头，例如 CC Switch / OpenCode Go 的 `x-opencode-session` | `{}` |
-| `llm.maxRetries` | 旧版扁平配置的 LLM 最大重试次数 | `2` |
+| `llm.maxRetries` | 旧版扁平配置的 LLM 最大重试次数；同 Provider 默认不重复请求 | `0` |
+| `llm.timeoutSeconds` | 单次聊天模型请求超时（秒） | `20` |
 | `llm.maxTokens` | 旧版扁平配置和 mock 的单次输出上限 | `200` |
 | `scheduler.batchWindowMs` | 群消息批处理窗口（毫秒） | `8000` |
 | `scheduler.urgentQuietWindowMs` | @/私聊消息的发送人静默窗口（毫秒） | `2000` |
 | `scheduler.urgentMaxWaitMs` | @/私聊批次从首条起的最大等待（毫秒） | `5000` |
 | `scheduler.normalQuietWindowMs` | 普通消息的发送人静默窗口（毫秒） | `4000` |
 | `scheduler.normalMaxWaitMs` | 普通批次从首条起的最大等待（毫秒） | `10000` |
+| `scheduler.initialReasoningEffort` | 普通聊天首次模型调用推理强度 | `none` |
+| `scheduler.toolReasoningEffort` | 工具调用后的模型综合推理强度 | `minimal` |
 | `scheduler.wakeProbability` | 普通消息唤醒概率 | `0.04` |
 | `scheduler.mentionDiveProbability` | 被 @ 或私聊时未回复直接潜水的概率 | `0.05` |
 | `scheduler.names` | 能被昵称唤起的名字列表 | `[]` |

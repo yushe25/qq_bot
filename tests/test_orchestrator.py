@@ -234,6 +234,8 @@ async def test_llm_failure_is_audited(stack: TestStack) -> None:
     outcome = await stack.orchestrator.run_wake(session, wake)
 
     assert outcome.error == "upstream down"
+    assert session.state == SessionState.DIVING
+    assert session.next_wake_at > 0
     assert outcome.timings["provider_started_at"] <= outcome.timings["provider_finished_at"]
     audits = await stack.store.list_audit(limit=50)
     assert any(item["action"] == "llm_complete_failed" and "upstream down" in item["result"] for item in audits)
@@ -299,6 +301,33 @@ async def test_final_model_step_omits_tools_and_aggregates_usage(stack: TestStac
     assert outcome.prompt_tokens == 30
     assert outcome.completion_tokens == 5
     assert outcome.total_tokens == 35
+
+
+async def test_reasoning_effort_uses_initial_then_tool_configuration(stack: TestStack) -> None:
+    stack.config.scheduler.initial_reasoning_effort = "none"
+    stack.config.scheduler.tool_reasoning_effort = "minimal"
+    provider = _ScriptedProvider(
+        [
+            ChatResult(
+                kind="tool_calls",
+                calls=[ToolCall(name="qq_wait", arguments={"durationMs": 1}, id="wait-1")],
+            ),
+            ChatResult(kind="text", content="收到"),
+        ]
+    )
+    stack.orchestrator.provider = provider
+    session = stack.sessions.ensure_session("group", "100000")
+
+    await stack.orchestrator.run_wake(
+        session,
+        WakeInput(
+            session_id=session.id,
+            category=TriggerCategory.NORMAL,
+            reason="普通聊天",
+        ),
+    )
+
+    assert [request.reasoning_effort for request in provider.requests] == ["none", "minimal"]
 
 
 async def test_repeated_tool_results_are_compressed(stack: TestStack) -> None:

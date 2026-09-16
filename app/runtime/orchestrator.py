@@ -182,6 +182,11 @@ class Orchestrator:
                         ),
                         temperature=provider_temperature,
                         max_tokens=provider_max_tokens,
+                        reasoning_effort=(
+                            self.config.scheduler.initial_reasoning_effort
+                            if step == 0
+                            else self.config.scheduler.tool_reasoning_effort
+                        ),
                     )
                 )
                 _accumulate_usage(outcome, result)

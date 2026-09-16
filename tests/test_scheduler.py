@@ -483,7 +483,7 @@ async def test_rate_limited_wake_is_deferred_with_pending_context_and_tick_consu
     assert any(item["decided"] == "wake" and item["reason"] == wake.reason for item in logs)
 
 
-async def test_cooldown_mention_is_not_overwritten_by_normal_message(
+async def test_cooldown_mention_bypasses_but_normal_message_waits(
     stack: TestStack,
     monkeypatch,
 ) -> None:
@@ -516,24 +516,17 @@ async def test_cooldown_mention_is_not_overwritten_by_normal_message(
     await stack.scheduler._decide_and_run(session, mention)
     await stack.scheduler._decide_and_run(session, normal)
 
+    assert [wake.category for wake in dispatched] == [TriggerCategory.MENTION]
     pending = stack.scheduler._pending_wakes[session.id]
-    assert pending.category == TriggerCategory.MENTION
-    assert pending.reason == "消息中包含 @"
-    assert [event.event_id for event in pending.events] == ["mention-cool-1", "normal-cool-1"]
+    assert pending.category == TriggerCategory.NORMAL
+    assert pending.reason == "普通消息概率唤醒"
+    assert [event.event_id for event in pending.events] == ["normal-cool-1"]
     persisted = await stack.store.load_pending_wakes()
     assert len(persisted) == 1
-    assert persisted[0][2].category == TriggerCategory.MENTION
-
-    session.cooldown_until = now_ms() - 1.0
-    session.next_wake_at = now_ms() - 1.0
-    await stack.scheduler.tick()
-    await stack.scheduler.tick()
-
-    assert dispatched
-    assert dispatched[-1].category == TriggerCategory.MENTION
+    assert persisted[0][2].category == TriggerCategory.NORMAL
     logs = await stack.store.list_wake_logs(session.id)
     assert any(item["decided"] == "wake" and item["category"] == "mention" for item in logs)
-    assert not any(item["decided"] == "wake" and item["category"] == "normal" for item in logs)
+    assert any(item["decided"] == "deferred" and item["category"] == "normal" for item in logs)
 
 
 async def test_merged_pending_wake_survives_restart(stack: TestStack) -> None:

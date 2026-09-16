@@ -73,8 +73,8 @@ class LLMProviderConfig(BaseModel):
     model: str = Field(min_length=1)
     temperature: float = Field(default=0.8, ge=0.0, le=2.0)
     max_tokens: int = Field(default=200, ge=1, le=4096)
-    timeout_seconds: float = Field(default=60.0, ge=1.0, le=300.0)
-    max_retries: int = Field(default=2, ge=0, le=5)
+    timeout_seconds: float = Field(default=20.0, ge=1.0, le=300.0)
+    max_retries: int = Field(default=0, ge=0, le=5)
     retry_base_delay_seconds: float = Field(default=1.0, ge=0.0, le=30.0)
     extra_headers: dict[str, str] = Field(default_factory=dict)
     capabilities: ProviderCapabilities = Field(default_factory=ProviderCapabilities)
@@ -102,8 +102,8 @@ class LLMConfig(BaseModel):
     model: str = "qwen2.5-32b"
     temperature: float = 0.8
     max_tokens: int = 200
-    timeout_seconds: float = 60.0
-    max_retries: int = 2
+    timeout_seconds: float = 20.0
+    max_retries: int = 0
     retry_base_delay_seconds: float = 1.0
 
     @field_validator("provider")
@@ -146,6 +146,8 @@ class SchedulerConfig(BaseModel):
     urgent_max_wait_ms: int = Field(default=5000, ge=0)
     normal_quiet_window_ms: int = Field(default=4000, ge=0)
     normal_max_wait_ms: int = Field(default=10_000, ge=0)
+    initial_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "none"
+    tool_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "minimal"
     wake_probability: float = 0.04
     mention_dive_probability: float = Field(default=0.05, ge=0.0, le=1.0)
     names: list[str] = Field(default_factory=list)

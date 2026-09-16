@@ -99,8 +99,12 @@ def test_config_example_parses_with_auto_tag_placeholders() -> None:
     assert config.scheduler.urgent_max_wait_ms == 5000
     assert config.scheduler.normal_quiet_window_ms == 4000
     assert config.scheduler.normal_max_wait_ms == 10_000
+    assert config.scheduler.initial_reasoning_effort == "none"
+    assert config.scheduler.tool_reasoning_effort == "minimal"
     assert config.safety.min_segment_delay_ms == 400
     assert config.safety.max_segment_delay_ms == 1200
+    assert config.llm.timeout_seconds == 20.0
+    assert config.llm.max_retries == 0
 
 
 def test_segment_delay_range_must_be_ordered() -> None:

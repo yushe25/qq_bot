@@ -339,7 +339,10 @@ class Scheduler:
             await self._defer(session, 5_000, "全局并发已满", wake)
             await self._log_wake(wake, "deferred", session.next_wake_at)
             return
-        if session.state == SessionState.COOLDOWN and wake.category != TriggerCategory.FORCE:
+        if session.state == SessionState.COOLDOWN and wake.category not in {
+            TriggerCategory.FORCE,
+            TriggerCategory.MENTION,
+        }:
             await self._defer(session, max(1000.0, session.cooldown_until - now_ms()), "冷却中", wake)
             await self._log_wake(wake, "deferred", session.next_wake_at)
             return

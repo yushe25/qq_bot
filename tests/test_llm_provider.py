@@ -188,6 +188,29 @@ async def test_provider_retries_transient_failure(monkeypatch: pytest.MonkeyPatc
     assert len(attempts) == 3
 
 
+async def test_provider_default_does_not_repeat_same_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(503, json={"error": "unavailable"})
+
+    _patch_http_client(monkeypatch, httpx.MockTransport(handler))
+    provider = OpenAICompatibleProvider(LLMConfig(base_url="http://test/v1"))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.complete(
+            ChatRequest(
+                system="system",
+                messages=[{"role": "user", "content": "hi"}],
+                tools=[],
+            )
+        )
+
+    assert provider.config.timeout_seconds == 20.0
+    assert len(attempts) == 1
+
+
 async def test_provider_raises_after_retries_exhausted(monkeypatch: pytest.MonkeyPatch) -> None:
     attempts: list[int] = []
 

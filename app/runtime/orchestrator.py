@@ -26,6 +26,7 @@ from app.safety.whitelist import Whitelist
 
 logger = logging.getLogger("qqf.orchestrator")
 _CANCELLED_TOOL_RESULT = "已取消：机器人已安排潜水，本批次后续工具未执行"
+_READ_ONLY_TOOLS = {"qq_get_group_history", "qq_get_members"}
 
 
 @dataclass
@@ -217,10 +218,10 @@ class Orchestrator:
                     for index, call in enumerate(result.calls)
                 ]
                 conversation[-1]["tool_calls"] = conversations
-                for index, call in enumerate(result.calls):
-                    timing_data.setdefault("tool_started_at", now_ms())
-                    call_result = await execute_tool(ctx, call)
-                    timing_data["tool_finished_at"] = now_ms()
+                timing_data.setdefault("tool_started_at", now_ms())
+                tool_results = await _execute_tool_batch(ctx, result.calls)
+                timing_data["tool_finished_at"] = now_ms()
+                for index, (call, call_result) in enumerate(tool_results):
                     call_id = call_ids[index]
                     result_text = _tool_result_text(
                         call.name,
@@ -360,6 +361,22 @@ def _tool_call_payload(call: ToolCall, call_id: str) -> dict[str, Any]:
             "arguments": json.dumps(call.arguments, ensure_ascii=False),
         },
     }
+
+
+async def _execute_tool_batch(
+    ctx: ToolContext,
+    calls: list[ToolCall],
+) -> list[tuple[ToolCall, Any]]:
+    if len(calls) > 1 and all(call.name in _READ_ONLY_TOOLS for call in calls):
+        results = await asyncio.gather(*(execute_tool(ctx, call) for call in calls))
+        return list(zip(calls, results, strict=True))
+    executed: list[tuple[ToolCall, Any]] = []
+    for call in calls:
+        result = await execute_tool(ctx, call)
+        executed.append((call, result))
+        if result.command == "dive":
+            break
+    return executed
 
 
 def _tool_result_text(

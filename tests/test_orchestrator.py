@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app.agent.llm_provider import ChatRequest, ChatResult
 from app.agent.providers.mock import MockProvider
 from app.domain.types import (
@@ -361,6 +363,50 @@ async def test_repeated_tool_results_are_compressed(stack: TestStack) -> None:
     assert "读取成功" in str(tool_messages[0]["content"])
     assert "重复工具结果" in str(tool_messages[1]["content"])
     assert tool_messages[1]["tool_call_id"] == "members-2"
+
+
+async def test_read_only_tools_run_in_parallel_and_keep_call_order(
+    stack: TestStack,
+    monkeypatch,
+) -> None:
+    stack.config.scheduler.max_tool_steps = 2
+    provider = _ScriptedProvider(
+        [
+            ChatResult(
+                kind="tool_calls",
+                calls=[
+                    ToolCall(name="qq_get_group_history", arguments={}, id="history-1"),
+                    ToolCall(name="qq_get_members", arguments={}, id="members-1"),
+                ],
+            ),
+            ChatResult(kind="text", content="收到"),
+        ]
+    )
+    stack.orchestrator.provider = provider
+    events: list[str] = []
+
+    async def fake_execute(ctx, call: ToolCall) -> ToolResult:
+        events.append(f"start:{call.name}")
+        await asyncio.sleep(0.02)
+        events.append(f"end:{call.name}")
+        return ToolResult(success=call.name != "qq_get_members", message=call.name)
+
+    monkeypatch.setattr("app.runtime.orchestrator.execute_tool", fake_execute)
+    session = stack.sessions.ensure_session("group", "100000")
+
+    await stack.orchestrator.run_wake(
+        session,
+        WakeInput(
+            session_id=session.id,
+            category=TriggerCategory.FORCE,
+            reason="测试并行工具",
+        ),
+    )
+
+    assert events[:2] == ["start:qq_get_group_history", "start:qq_get_members"]
+    tool_messages = [item for item in session.conversation if item.get("role") == "tool"]
+    assert [item["tool_call_id"] for item in tool_messages] == ["history-1", "members-1"]
+    assert "qq_get_members" in str(tool_messages[1]["content"])
 
 
 async def test_session_history_is_saved_within_budget(stack: TestStack) -> None:

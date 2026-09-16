@@ -1,0 +1,132 @@
+# T-30 拟人化回复分段与响应延迟验收记录
+
+- 日期：2026-09-16
+- 分支：`main`
+- 代码基线：`f22728c`
+- 交办单：`docs/reports/T-30-human-like-reply-segmentation-handoff-20260916.md`
+- 状态：T-30.1 至 T-30.4、T-30.6 至 T-30.10 完成；T-30.5 待真实环境交接
+
+## 一、结论
+
+代码层已完成中文停顿空格分段、安全限幅、分段延迟、阶段埋点、发送人静默批处理、
+冷却例外、模型耗时控制、内存读缓存和只读工具并行。自动化门禁全部通过。
+
+真实 Provider 探针在 `AppConfig.load("config.json")` 后调用失败，错误为
+`httpx.ConnectError: All connection attempts failed`。未读取或输出密钥、地址和响应正文，
+因此 T-30.5 的 20 次真实模型 P50/P95 指标不能标记通过。
+
+## 二、交付矩阵
+
+| 编号 | 状态 | 提交 | 说明 |
+| --- | --- | --- | --- |
+| T-30.1 | 完成 | `b53fe54` | 中文停顿空格、保护片段、纯标点和尾部合并算法 |
+| T-30.2 | 完成 | `bdf3c87` | 按剩余发送额度合并尾部，不丢内容 |
+| T-30.3 | 完成 | `fd10a4f` | 400 到 1200 毫秒可配置分段延迟 |
+| T-30.4 | 完成 | `9a794b7` | system prompt 禁止用空格替代逗号 |
+| T-30.5 | 阻塞 | 无 | 真实 Provider 当前不可连接，需工程师二号 |
+| T-30.6 | 完成 | `b991ef7` | 入队、模型、工具、安全、发送阶段埋点 |
+| T-30.7 | 完成 | `612db53` | 按发送人静默窗口和会话最长等待批处理 |
+| T-30.8 | 完成 | `43271f1` | 紧急冷却例外、reasoning effort、20 秒且不重试 |
+| T-30.9 | 完成 | `d34e6ba` | 成员 5 分钟、历史 50 条/60 秒内存缓存 |
+| T-30.10 | 完成 | `685ee15` | 历史和成员只读工具并行执行 |
+
+## 三、分段验收
+
+```text
+这串代码是啥 没看懂
+-> ["这串代码是啥", "没看懂"]
+
+这串代码是啥　没看懂
+-> ["这串代码是啥", "没看懂"]
+
+hello world
+-> ["hello world"]
+
+版本是 3.14 元
+-> ["版本是 3.14 元"]
+
+看下 https://example.com 这个
+-> ["看下 https://example.com 这个"]
+
+打开 C:\work\a.py 文件
+-> ["打开 C:\work\a.py 文件"]
+
+运行 `pytest -q` 命令
+-> ["运行 `pytest -q` 命令"]
+
+@小明 你看下 这个报错了
+-> ["@小明 你看下 这个报错了"]
+```
+
+发送上限验收：
+
+```text
+maxSendsPerWake=3
+第一段，第二段，第三段，第四段
+-> ["第一段", "第二段", "第三段第四段"]
+```
+
+尾部内容未丢失，并写入 `reply_segments_merged` debug 审计。
+
+## 四、延迟与缓存验收
+
+- 分段延迟只发生在第二条及后续消息之前；配置为 0 时不调用 sleep。
+- 延迟后仍重新执行限流，测试覆盖第二条被频率上限拒绝。
+- `wake_log.timings_json` 记录 `received_at`、`batch_ready_at`、`dispatch_at`、
+  `provider_started_at`、`provider_finished_at`、工具起止、安全检查、首条和末条发送时间。
+- 阶段埋点只包含数值时间戳，不包含消息正文、Token、密钥或绝对路径。
+- 同发送人继续发消息只刷新自己的静默计时，其他发送人不刷新原计时。
+- 会话最长等待不会因后续消息无限延长，20 条消息立即进入处理。
+- `@` 和私聊在普通冷却期仍可进入处理；普通消息继续等待冷却结束。
+- 默认聊天超时为 20 秒；默认 `maxRetries=0`，同一 Provider 不重复请求。
+- 普通聊天首次使用 `reasoning_effort=none`，工具综合使用 `minimal`，均可配置。
+- 成员缓存 TTL 为 5 分钟；历史缓存最多 50 条、TTL 60 秒；同键并发只拉取一次。
+- 成员增加、退出、管理员或群名片变化会使成员缓存失效；失败结果不缓存。
+- 历史和成员同时请求时并行执行，工具结果按原调用顺序写回。
+
+## 五、自动化门禁
+
+```text
+.venv\Scripts\python.exe -m pytest -q
+355 passed, 1 warning
+
+.venv\Scripts\python.exe -m ruff check .
+All checks passed!
+
+.venv\Scripts\python.exe -m pyright
+0 errors, 0 warnings, 0 informations
+
+.venv\Scripts\python.exe scripts\check_docs_consistency.py
+docs consistency ok
+
+git diff --check
+passed
+```
+
+warning 为 FastAPI/Starlette TestClient 上游弃用提示，与本任务无关。
+
+## 六、需交接工程师二号
+
+需要具备以下条件后执行 T-30.5：
+
+1. 可访问的 OpenAI-compatible Provider、有效凭据和固定模型。
+2. 至少 20 次受控对话，覆盖 `@`、普通聊天、同发送人连续消息、多发送人交叉消息。
+3. 一次历史工具、一次成员工具，以及历史和成员同时调用且缓存命中的场景。
+4. 模型超时和备用 Provider 切换场景。
+5. 汇总 `wake_log.timings_json`，计算首条和末条发送的 P50/P95。
+
+当前配置连接失败属于外部环境阻塞，不能用离线 mock 指标替代真实结论。
+
+## 七、遗留风险
+
+- 真实模型是否稳定遵守“不要用一个空格代替逗号”仍需 T-30.5 验证。
+- 不同 Provider 对 `reasoning_effort` 支持程度不同；不支持时需在配置中设为 `null`。
+- 历史缓存依赖 OneBot 事件包含群消息原文；缺失字段时只影响缓存命中，不影响回源查询。
+- 当前没有真实群延迟样本，不能声明达到交办单中的真实 P50/P95 阈值。
+
+## 八、回滚
+
+1. 将 `safety.minSegmentDelayMs` 和 `safety.maxSegmentDelayMs` 设为 0，恢复连续发送。
+2. 将 `scheduler.initialReasoningEffort` 和 `toolReasoningEffort` 设为 `null`，取消请求参数。
+3. 将 `llm.timeoutSeconds` 和 `llm.maxRetries` 恢复为部署前配置。
+4. 保留 SQLite 迁移和 `wake_log` 数据；需要回退数据库时使用 migration 自动备份。

@@ -92,3 +92,13 @@ normalize_reply_segments(
 ## 开放问题
 
 - 真实模型 P50/P95 指标需要凭据、真实群和网络环境，作为独立真实环境验收项处理。
+
+## 实现记录
+
+- `normalize_reply_segments()` 支持中英文硬标点、中文停顿空格、保护片段和尾部合并。
+- SafetyPipeline 在发送前按剩余额度合并超限尾部，并执行可配置分段延迟和逐条安全校验。
+- Scheduler 使用发送人静默窗口、会话最长等待和 20 条强制 flush；紧急消息绕过普通冷却。
+- Orchestrator 使用可配置 reasoning effort，并在同一轮并行执行历史和成员只读工具。
+- OneBot 网关使用内存 LRU/TTL 缓存群成员和历史，消息事件增量更新，成员变化事件失效。
+- 阶段耗时写入 `wake_log.timings_json`，失败路径也保留已到达阶段。
+- 真实 Provider 回归已尝试但当前环境连接失败，需要可访问的 Provider 环境完成 P50/P95 验收。

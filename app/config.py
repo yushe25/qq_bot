@@ -176,6 +176,14 @@ class SafetyConfig(BaseModel):
     max_message_chars: int = 200
     max_image_bytes: int = 8 * 1024 * 1024
     max_image_pixels: int = 40_960_000
+    min_segment_delay_ms: int = Field(default=400, ge=0, le=10_000)
+    max_segment_delay_ms: int = Field(default=1200, ge=0, le=10_000)
+
+    @model_validator(mode="after")
+    def validate_segment_delay(self) -> SafetyConfig:
+        if self.min_segment_delay_ms > self.max_segment_delay_ms:
+            raise ValueError("safety.minSegmentDelayMs must not exceed safety.maxSegmentDelayMs")
+        return self
 
 
 class ConsoleConfig(BaseModel):

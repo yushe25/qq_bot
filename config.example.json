@@ -93,7 +93,9 @@
     "maxSendsPerWake": 3,
     "maxMessageChars": 200,
     "maxImageBytes": 8388608,
-    "maxImagePixels": 40960000
+    "maxImagePixels": 40960000,
+    "minSegmentDelayMs": 400,
+    "maxSegmentDelayMs": 1200
   },
   "console": {
     "host": "127.0.0.1",

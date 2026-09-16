@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -165,6 +167,13 @@ class SafetyPipeline:
                 item["message"] = text
                 action_type = str(item.get("type", ""))
                 segment_mentions = mention_ids if segment_index == 0 else ()
+                if sent_count > 0:
+                    delay_ms = random.uniform(
+                        self.config.min_segment_delay_ms,
+                        self.config.max_segment_delay_ms,
+                    )
+                    if delay_ms > 0:
+                        await asyncio.sleep(delay_ms / 1000.0)
                 if action_type == "send_group":
                     scene_id = str(item["group_id"])
                     if sent_count >= self.config.max_sends_per_wake:

@@ -95,6 +95,20 @@ def test_config_example_parses_with_auto_tag_placeholders() -> None:
 
     assert config.sticker.auto_tag.provider == "vision-main"
     assert config.sticker.auto_tag.providers["vision-main"].api_key_env == "QQF_VISION_API_KEY"
+    assert config.safety.min_segment_delay_ms == 400
+    assert config.safety.max_segment_delay_ms == 1200
+
+
+def test_segment_delay_range_must_be_ordered() -> None:
+    with pytest.raises(ValidationError, match="minSegmentDelayMs"):
+        AppConfig.model_validate(
+            {
+                "safety": {
+                    "min_segment_delay_ms": 1200,
+                    "max_segment_delay_ms": 400,
+                }
+            }
+        )
 
 
 def test_qq_transport_allows_loopback_by_default() -> None:

@@ -296,6 +296,8 @@ python scripts/onebot_check.py
 | `safety.maxSendsPerWake` | 单次唤醒最多发送条数 | `3` |
 | `safety.maxSendsPerDay` | 每会话每日发送上限，熔断后需控制台恢复 | `200` |
 | `safety.maxMessageChars` | 单条出站文本最大字符数 | `200` |
+| `safety.minSegmentDelayMs` | 多段回复之间的最小随机间隔（毫秒） | `400` |
+| `safety.maxSegmentDelayMs` | 多段回复之间的最大随机间隔（毫秒） | `1200` |
 | `console.host` / `console.port` | 控制台监听地址 | `127.0.0.1:3100` |
 | `console.token` | 控制台访问 Token；为空时只放行回环地址来源 | 空 |
 | `storage.databasePath` | SQLite 状态库路径 | `state/qqf.db` |

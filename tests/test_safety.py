@@ -373,6 +373,66 @@ async def test_safety_pipeline_merges_segment_tail_at_wake_limit(stack: TestStac
     assert any(item["action"] == "reply_segments_merged" for item in audits)
 
 
+async def test_segment_delay_is_applied_and_rechecks_rate_limit(
+    stack: TestStack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stack.config.safety.min_segment_delay_ms = 400
+    stack.config.safety.max_segment_delay_ms = 400
+    stack.safety.send_limiter = RateLimiter(max_per_minute=1, max_per_hour=100)
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr("app.runtime.safety_pipeline.asyncio.sleep", fake_sleep)
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append({"type": "send_group", "group_id": "100000", "message": "第一段，第二段"})
+
+    results = await stack.safety.execute_outbox(context, stack.gateway)
+
+    assert delays == [0.4]
+    assert results[0]["ok"] is True
+    assert results[1]["ok"] is False
+    assert results[1]["reason"] == "发送频率超限"
+    assert [item["text"] for item in stack.gateway.sent] == ["第一段"]
+
+
+async def test_zero_segment_delay_disables_sleep(
+    stack: TestStack,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stack.config.safety.min_segment_delay_ms = 0
+    stack.config.safety.max_segment_delay_ms = 0
+    delays: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    monkeypatch.setattr("app.runtime.safety_pipeline.asyncio.sleep", fake_sleep)
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append({"type": "send_group", "group_id": "100000", "message": "第一段，第二段"})
+
+    results = await stack.safety.execute_outbox(context, stack.gateway)
+
+    assert delays == []
+    assert [item.get("ok") for item in results] == [True, True]
+
+
 async def test_safety_pipeline_preserves_literal_at(stack: TestStack) -> None:
     session = Session(id="group:100000", scene_type="group", scene_id="100000")
     context = ToolContext(

@@ -98,7 +98,8 @@ class Scheduler:
         self.sticker_context = sticker_context
         self.dedupe = MessageDedupe()
         self._inbox: dict[str, list[NormalizedEvent]] = {}
-        self._deadlines: dict[str, float] = {}
+        self._sender_deadlines: dict[str, dict[str, float]] = {}
+        self._max_deadlines: dict[str, float] = {}
         self._pending_wakes: dict[str, WakeInput] = {}
         self._wake_timings: dict[str, dict[str, float]] = {}
         self._pending_observations: dict[str, list[NormalizedEvent]] = {}
@@ -153,12 +154,26 @@ class Scheduler:
         session.last_message_at = now_ms()
         batch = self._inbox.setdefault(session.id, [])
         batch.append(event)
-        self._deadlines[session.id] = max(
-            self._deadlines.get(session.id, 0.0),
-            now_ms() + self.config.scheduler.batch_window_ms,
+        category, _ = self._classify([event])
+        urgent = category in {TriggerCategory.FORCE, TriggerCategory.MENTION}
+        quiet_window = (
+            self.config.scheduler.urgent_quiet_window_ms
+            if urgent
+            else self.config.scheduler.normal_quiet_window_ms
         )
+        max_wait = (
+            self.config.scheduler.urgent_max_wait_ms
+            if urgent
+            else self.config.scheduler.normal_max_wait_ms
+        )
+        timestamp = now_ms()
+        sender_key = event.sender_id or "__unknown__"
+        self._sender_deadlines.setdefault(session.id, {})[sender_key] = timestamp + quiet_window
+        deadline = timestamp + max_wait
+        previous = self._max_deadlines.get(session.id)
+        self._max_deadlines[session.id] = deadline if previous is None else min(previous, deadline)
         if len(batch) >= 20:
-            self._deadlines[session.id] = now_ms()
+            self._max_deadlines[session.id] = timestamp
 
     async def run(self) -> None:
         while not self._stopped:
@@ -179,10 +194,11 @@ class Scheduler:
         for session_id, events in list(self._inbox.items()):
             if not events:
                 continue
-            if now < self._deadlines.get(session_id, 0.0) and len(events) < 20:
+            if not self._batch_ready(session_id, events, now):
                 continue
             self._inbox.pop(session_id, None)
-            self._deadlines.pop(session_id, None)
+            self._sender_deadlines.pop(session_id, None)
+            self._max_deadlines.pop(session_id, None)
             session = self.sessions.get(session_id)
             if session is None:
                 continue
@@ -241,6 +257,16 @@ class Scheduler:
         if not event.text.strip():
             return
         self._pending_observations.setdefault(event.session_id, []).append(event)
+
+    def _batch_ready(self, session_id: str, events: list[NormalizedEvent], now: float) -> bool:
+        if len(events) >= 20:
+            return True
+        if now >= self._max_deadlines.get(session_id, float("inf")):
+            return True
+        return any(
+            now >= deadline
+            for deadline in self._sender_deadlines.get(session_id, {}).values()
+        )
 
     async def _flush_observations(self) -> None:
         if not self._pending_observations:

@@ -63,6 +63,10 @@ async def stack(tmp_path) -> AsyncIterator[TestStack]:
         ),
         scheduler=SchedulerConfig(
             batch_window_ms=0,
+            urgent_quiet_window_ms=0,
+            urgent_max_wait_ms=0,
+            normal_quiet_window_ms=0,
+            normal_max_wait_ms=0,
             wake_probability=0.0,
             names=["小皮"],
             keywords=["开黑"],

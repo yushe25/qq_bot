@@ -269,6 +269,10 @@ python scripts/onebot_check.py
 | `llm.maxRetries` | 旧版扁平配置的 LLM 最大重试次数 | `2` |
 | `llm.maxTokens` | 旧版扁平配置和 mock 的单次输出上限 | `200` |
 | `scheduler.batchWindowMs` | 群消息批处理窗口（毫秒） | `8000` |
+| `scheduler.urgentQuietWindowMs` | @/私聊消息的发送人静默窗口（毫秒） | `2000` |
+| `scheduler.urgentMaxWaitMs` | @/私聊批次从首条起的最大等待（毫秒） | `5000` |
+| `scheduler.normalQuietWindowMs` | 普通消息的发送人静默窗口（毫秒） | `4000` |
+| `scheduler.normalMaxWaitMs` | 普通批次从首条起的最大等待（毫秒） | `10000` |
 | `scheduler.wakeProbability` | 普通消息唤醒概率 | `0.04` |
 | `scheduler.mentionDiveProbability` | 被 @ 或私聊时未回复直接潜水的概率 | `0.05` |
 | `scheduler.names` | 能被昵称唤起的名字列表 | `[]` |

@@ -28,6 +28,7 @@ def _event(
     text: str = "",
     *,
     kind: str = "group",
+    sender_id: str = "10001",
     segments: tuple[MessageSegment, ...] | None = None,
     bot_id: str = "31415926",
     event_id: str = "e",
@@ -37,7 +38,7 @@ def _event(
         event_id=event_id,
         session_id=session_id,
         timestamp=1767171600000,
-        sender_id="10001",
+        sender_id=sender_id,
         sender_name="阿泽",
         kind=kind,
         segments=segs,
@@ -339,6 +340,93 @@ async def test_ingest_deduplicates_and_tick_logs_no_action(stack: TestStack, mon
     assert any(item["decided"] == "no_action" for item in logs)
 
 
+async def test_per_sender_quiet_windows_are_independent(
+    stack: TestStack,
+    monkeypatch,
+) -> None:
+    stack.config.scheduler.normal_quiet_window_ms = 4000
+    stack.config.scheduler.normal_max_wait_ms = 10_000
+    clock = [1000.0]
+    monkeypatch.setattr("app.runtime.scheduler.now_ms", lambda: clock[0])
+    session_id = "group:100000"
+
+    await stack.scheduler.ingest(_event(session_id, "甲第一条", event_id="a-1"))
+    clock[0] = 2000.0
+    await stack.scheduler.ingest(_event(session_id, "甲第二条", event_id="a-2"))
+    clock[0] = 2500.0
+    await stack.scheduler.ingest(_event(session_id, "乙第一条", sender_id="10002", event_id="b-1"))
+
+    deadlines = stack.scheduler._sender_deadlines[session_id]
+    assert deadlines["10001"] == 6000.0
+    assert deadlines["10002"] == 6500.0
+    assert stack.scheduler._max_deadlines[session_id] == 11_000.0
+
+
+async def test_quiet_window_does_not_extend_session_max_wait(
+    stack: TestStack,
+    monkeypatch,
+) -> None:
+    stack.config.scheduler.normal_quiet_window_ms = 4000
+    stack.config.scheduler.normal_max_wait_ms = 10_000
+    clock = [1000.0]
+    monkeypatch.setattr("app.runtime.scheduler.now_ms", lambda: clock[0])
+    session_id = "group:100000"
+
+    await stack.scheduler.ingest(_event(session_id, "第一条", event_id="max-1"))
+    clock[0] = 9000.0
+    await stack.scheduler.ingest(_event(session_id, "第二条", event_id="max-2"))
+
+    assert stack.scheduler._sender_deadlines[session_id]["10001"] == 13_000.0
+    assert stack.scheduler._max_deadlines[session_id] == 11_000.0
+
+
+async def test_quiet_batch_merges_other_senders_and_uses_deadline(
+    stack: TestStack,
+    monkeypatch,
+) -> None:
+    stack.config.scheduler.normal_quiet_window_ms = 4000
+    stack.config.scheduler.normal_max_wait_ms = 10_000
+    clock = [1000.0]
+    monkeypatch.setattr("app.runtime.scheduler.now_ms", lambda: clock[0])
+    session_id = "group:100000"
+    captured: list[WakeInput] = []
+
+    async def capture(session, wake: WakeInput) -> None:
+        captured.append(wake)
+
+    monkeypatch.setattr(stack.scheduler, "_decide_and_run", capture)
+    session = stack.sessions.ensure_session("group", "100000")
+    session.next_wake_at = now_ms() + 60_000
+    await stack.scheduler.ingest(_event(session_id, "甲", event_id="merge-1"))
+    clock[0] = 3500.0
+    await stack.scheduler.ingest(_event(session_id, "乙", sender_id="10002", event_id="merge-2"))
+
+    clock[0] = 5000.0
+    await stack.scheduler.tick()
+
+    assert len(captured) == 1
+    assert [event.event_id for event in captured[0].events] == ["merge-1", "merge-2"]
+
+
+async def test_twenty_messages_flush_immediately(
+    stack: TestStack,
+    monkeypatch,
+) -> None:
+    stack.config.scheduler.normal_quiet_window_ms = 4000
+    stack.config.scheduler.normal_max_wait_ms = 10_000
+    clock = [1000.0]
+    monkeypatch.setattr("app.runtime.scheduler.now_ms", lambda: clock[0])
+    session_id = "group:100000"
+
+    for index in range(20):
+        await stack.scheduler.ingest(
+            _event(session_id, f"消息-{index}", event_id=f"batch-{index}")
+        )
+
+    assert stack.scheduler._max_deadlines[session_id] == 1000.0
+    assert stack.scheduler._batch_ready(session_id, stack.scheduler._inbox[session_id], 1000.0)
+
+
 async def test_ignore_own_message(stack: TestStack) -> None:
     session_id = "group:100000"
     event = _event(session_id, "自己说的", event_id="own-1", bot_id="31415926")
@@ -603,7 +691,12 @@ async def test_wake_records_provider_token_usage(stack: TestStack) -> None:
     logs: list[dict[str, object]] = []
     for _ in range(100):
         logs = await stack.store.list_wake_logs(session.id)
-        if any(item.get("decided") == "wake" and item.get("total_tokens") for item in logs):
+        if any(
+            item.get("decided") == "wake"
+            and item.get("total_tokens")
+            and "received_at" in str(item.get("timings_json"))
+            for item in logs
+        ):
             break
         await asyncio.sleep(0.01)
 

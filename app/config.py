@@ -142,6 +142,10 @@ class LLMConfig(BaseModel):
 
 class SchedulerConfig(BaseModel):
     batch_window_ms: int = 8000
+    urgent_quiet_window_ms: int = Field(default=2000, ge=0)
+    urgent_max_wait_ms: int = Field(default=5000, ge=0)
+    normal_quiet_window_ms: int = Field(default=4000, ge=0)
+    normal_max_wait_ms: int = Field(default=10_000, ge=0)
     wake_probability: float = 0.04
     mention_dive_probability: float = Field(default=0.05, ge=0.0, le=1.0)
     names: list[str] = Field(default_factory=list)

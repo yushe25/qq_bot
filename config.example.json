@@ -50,6 +50,10 @@
   },
   "scheduler": {
     "batchWindowMs": 8000,
+    "urgentQuietWindowMs": 2000,
+    "urgentMaxWaitMs": 5000,
+    "normalQuietWindowMs": 4000,
+    "normalMaxWaitMs": 10000,
     "wakeProbability": 0.04,
     "mentionDiveProbability": 0.05,
     "names": ["小皮"],

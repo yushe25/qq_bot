@@ -95,6 +95,10 @@ def test_config_example_parses_with_auto_tag_placeholders() -> None:
 
     assert config.sticker.auto_tag.provider == "vision-main"
     assert config.sticker.auto_tag.providers["vision-main"].api_key_env == "QQF_VISION_API_KEY"
+    assert config.scheduler.urgent_quiet_window_ms == 2000
+    assert config.scheduler.urgent_max_wait_ms == 5000
+    assert config.scheduler.normal_quiet_window_ms == 4000
+    assert config.scheduler.normal_max_wait_ms == 10_000
     assert config.safety.min_segment_delay_ms == 400
     assert config.safety.max_segment_delay_ms == 1200
 

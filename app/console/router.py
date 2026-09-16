@@ -6,14 +6,14 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import ConsoleConfig
-from app.console.service import InvalidReviewCursor
+from app.console.service import InvalidLogCursor, InvalidReviewCursor
 from app.safety.content_filter import ContentFilter
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
@@ -216,6 +216,19 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
     ) -> dict[str, Any]:
         runtime = _runtime(request)
         return {"items": await runtime.store.list_wake_logs(session_id=session_id, limit=limit)}
+
+    @router.get("/api/logs", dependencies=[Depends(require_auth)])
+    async def merged_logs(
+        request: Request,
+        type: Literal["all", "wake", "audit"] = Query(default="all"),
+        limit: int = Query(default=20, ge=1, le=100),
+        cursor: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        runtime = _runtime(request)
+        try:
+            return await runtime.console.list_logs(type, limit=limit, cursor=cursor)
+        except InvalidLogCursor as exc:
+            raise HTTPException(status_code=400, detail="invalid cursor") from exc
 
     @router.get("/api/stickers/review", dependencies=[Depends(require_auth)])
     async def sticker_review(

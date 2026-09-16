@@ -20,7 +20,7 @@ async def test_new_database_records_initial_migration(tmp_path: Path) -> None:
     finally:
         await store.close()
 
-    assert [row[0] for row in rows] == [1, 2, 3, 4]
+    assert [row[0] for row in rows] == [1, 2, 3, 4, 5]
     assert all(isinstance(row[1], str) and row[1] for row in rows)
 
 
@@ -62,9 +62,15 @@ async def test_legacy_database_migrates_with_backup_and_preserves_data(tmp_path:
 
     assert {"prompt_tokens", "completion_tokens", "total_tokens"} <= columns
     assert row == (0, 0, 0)
-    assert versions == [(1,), (2,), (3,), (4,)]
+    assert versions == [(1,), (2,), (3,), (4,), (5,)]
     assert "inbound_media" in tables
     assert list((tmp_path / "backups").glob("legacy-*.db"))
+
+    conn = sqlite3.connect(database)
+    indexes = {row[1] for row in conn.execute("SELECT * FROM pragma_index_list('wake_log')")}
+    indexes |= {row[1] for row in conn.execute("SELECT * FROM pragma_index_list('audit_logs')")}
+    conn.close()
+    assert {"idx_wake_log_created_at", "idx_audit_logs_timestamp"} <= indexes
 
 
 def test_group_review_migration_backfills_existing_media_status(tmp_path: Path) -> None:

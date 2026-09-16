@@ -245,6 +245,13 @@ SET review_status = COALESCE((
     );
 """
 
+_LOG_PAGINATION_SCHEMA = """
+CREATE INDEX IF NOT EXISTS idx_wake_log_created_at
+    ON wake_log(created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_logs_timestamp
+    ON audit_logs(timestamp DESC, id DESC);
+"""
+
 _UPSERT_SESSION_SQL = """
 INSERT INTO sessions (
     id, scene_type, scene_id, state, persona_id,
@@ -735,6 +742,67 @@ class StateStore:
                 (session_id, limit),
             )
         return await self._query("SELECT * FROM wake_log ORDER BY id DESC LIMIT ?", (limit,))
+
+    async def list_merged_logs(
+        self,
+        log_type: str,
+        *,
+        limit: int = 20,
+        cursor: tuple[float, int, int] | None = None,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        if log_type not in {"all", "wake", "audit"}:
+            raise ValueError("invalid log type")
+        branches: list[str] = []
+        if log_type in {"all", "wake"}:
+            branches.append(
+                """
+                SELECT 'wake' AS type, id AS source_id, created_at AS timestamp,
+                       0 AS source_priority, session_id, category AS title,
+                       decided AS result, reason AS detail
+                FROM wake_log
+                """
+            )
+        if log_type in {"all", "audit"}:
+            branches.append(
+                """
+                SELECT 'audit' AS type, id AS source_id, timestamp AS timestamp,
+                       1 AS source_priority, session_id, action AS title,
+                       result AS result, detail AS detail
+                FROM audit_logs
+                """
+            )
+
+        where = ""
+        params: list[Any] = []
+        if cursor is not None:
+            timestamp, source_priority, source_id = cursor
+            where = """
+                WHERE (
+                    timestamp < ?
+                    OR (timestamp = ? AND source_priority < ?)
+                    OR (timestamp = ? AND source_priority = ? AND source_id < ?)
+                )
+            """
+            params.extend(
+                [
+                    timestamp,
+                    timestamp,
+                    source_priority,
+                    timestamp,
+                    source_priority,
+                    source_id,
+                ]
+            )
+        rows = await self._query(
+            f"""
+            SELECT * FROM ({' UNION ALL '.join(branches)}) AS logs
+            {where}
+            ORDER BY timestamp DESC, source_priority DESC, source_id DESC
+            LIMIT ?
+            """,
+            (*params, max(1, int(limit)) + 1),
+        )
+        return rows[:limit], len(rows) > limit
 
     async def get_sticker_usage(self, sticker_id: str) -> int:
         rows = await self._query(
@@ -1489,6 +1557,10 @@ def _apply_sticker_ingest_group_review_schema(conn: sqlite3.Connection) -> None:
     _execute_schema_statements(conn, _STICKER_INGEST_GROUP_REVIEW_SCHEMA)
 
 
+def _apply_log_pagination_schema(conn: sqlite3.Connection) -> None:
+    _execute_schema_statements(conn, _LOG_PAGINATION_SCHEMA)
+
+
 def _execute_schema_statements(conn: sqlite3.Connection, schema: str) -> None:
     for statement in schema.split(";"):
         if statement.strip():
@@ -1504,6 +1576,7 @@ _MIGRATIONS = (
         name="sticker_ingest_group_review",
         apply=_apply_sticker_ingest_group_review_schema,
     ),
+    Migration(version=5, name="log_pagination_indexes", apply=_apply_log_pagination_schema),
 )
 
 

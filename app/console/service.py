@@ -21,6 +21,10 @@ class InvalidReviewCursor(ValueError):
     pass
 
 
+class InvalidLogCursor(ValueError):
+    pass
+
+
 class ConsoleService:
     def __init__(
         self,
@@ -231,6 +235,34 @@ class ConsoleService:
         rows = await self.store.list_sticker_context_for_media(media_id)
         return [_context_item(row) for row in rows]
 
+    async def list_logs(
+        self,
+        log_type: str = "all",
+        *,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        if log_type not in {"all", "wake", "audit"}:
+            raise ValueError("invalid log type")
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        decoded = _decode_log_cursor(cursor) if cursor else None
+        rows, has_more = await self.store.list_merged_logs(
+            log_type,
+            limit=limit,
+            cursor=decoded,
+        )
+        items = [_merged_log_item(row) for row in rows]
+        next_cursor = None
+        if has_more and rows:
+            last = rows[-1]
+            next_cursor = _encode_log_cursor(
+                float(last["timestamp"]),
+                int(last["source_priority"]),
+                int(last["source_id"]),
+            )
+        return {"items": items, "nextCursor": next_cursor}
+
     async def _move_to_rejected(self, media: dict[str, object]) -> str | None:
         if self.sticker_dir is None:
             return None
@@ -318,6 +350,56 @@ def _context_item(row: dict[str, Any]) -> dict[str, object]:
         "afterContext": _json_list(row.get("after_context_json")),
         "situationTags": _json_list(row.get("situation_tags_json")),
     }
+
+
+def _merged_log_item(row: dict[str, Any]) -> dict[str, object]:
+    log_type = str(row["type"])
+    source_id = int(row["source_id"])
+    return {
+        "id": f"{log_type}:{source_id}",
+        "type": log_type,
+        "timestamp": float(row["timestamp"]),
+        "sessionId": str(row.get("session_id") or ""),
+        "title": str(row.get("title") or ""),
+        "result": str(row.get("result") or ""),
+        "detail": str(row.get("detail") or ""),
+    }
+
+
+def _encode_log_cursor(timestamp: float, source_priority: int, source_id: int) -> str:
+    payload = json.dumps(
+        [1, timestamp, source_priority, source_id],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_log_cursor(value: str) -> tuple[float, int, int]:
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = base64.urlsafe_b64decode(f"{value}{padding}")
+        payload = json.loads(raw.decode("utf-8"))
+        if (
+            not isinstance(payload, list)
+            or len(payload) != 4
+            or payload[0] != 1
+            or not isinstance(payload[1], (int, float))
+            or isinstance(payload[1], bool)
+            or not isinstance(payload[2], int)
+            or isinstance(payload[2], bool)
+            or not isinstance(payload[3], int)
+            or isinstance(payload[3], bool)
+        ):
+            raise ValueError("invalid cursor payload")
+        timestamp = float(payload[1])
+        source_priority = int(payload[2])
+        source_id = int(payload[3])
+        if not math.isfinite(timestamp) or source_priority < 0 or source_id < 0:
+            raise ValueError("invalid cursor values")
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error) as exc:
+        raise InvalidLogCursor("invalid cursor") from exc
+    return timestamp, source_priority, source_id
 
 
 def _json_list(value: object) -> list[object]:

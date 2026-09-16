@@ -18,3 +18,6 @@ def test_console_uses_wake_logs_and_structured_event_feed() -> None:
     assert "metadataFromCard" in page
     assert "avoidScenes: splitMetadataList" in page
     assert "body: JSON.stringify({ groupId: item.groupId, metadata })" in page
+    assert "let stickerLoadedCount = 10;" in page
+    assert "async function reloadStickerReviewAfterMutation()" in page
+    assert "window.scrollTo({ top: scrollY })" in page

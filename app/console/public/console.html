@@ -239,6 +239,7 @@
 const $ = (sel) => document.querySelector(sel);
 let ws = null;
 let token = sessionStorage.getItem('qqfToken') || '';
+let stickerLoadedCount = 10;
 
 function setOnline(on) {
   $('#state-dot').classList.toggle('on', on);
@@ -324,18 +325,59 @@ async function loadHealth() {
   }
 }
 
-async function loadStickerReview() {
+async function loadStickerReview(count = stickerLoadedCount, preserveScroll = true) {
+  const root = $('#sticker-review');
+  const scrollY = window.scrollY;
+  const rootScrollTop = root.scrollTop;
   try {
-    const data = await api('/api/stickers/review?limit=10');
+    const data = await fetchStickerReviewItems(Math.max(10, Number(count) || 10));
     $('#review-summary').textContent = `待审核 ${data.totalPending ?? 0}`;
     renderStickerReview(data.items || []);
+    if (preserveScroll) {
+      requestAnimationFrame(() => {
+        root.scrollTop = rootScrollTop;
+        window.scrollTo({ top: scrollY });
+      });
+    }
   } catch (err) {
-    $('#sticker-review').innerHTML = '<div class="empty">加载失败</div>';
+    root.innerHTML = '<div class="empty">加载失败</div>';
   }
+}
+
+async function fetchStickerReviewItems(count) {
+  const items = [];
+  const seen = new Set();
+  let cursor = null;
+  let totalPending = 0;
+  while (items.length < count) {
+    const remaining = count - items.length;
+    const limit = Math.min(50, Math.max(10, remaining));
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (cursor) query.set('cursor', cursor);
+    const data = await api(`/api/stickers/review?${query}`);
+    totalPending = Number(data.totalPending || 0);
+    const pageItems = data.items || [];
+    if (!pageItems.length) break;
+    for (const item of pageItems) {
+      const key = `${item.mediaId}:${item.groupId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push(item);
+      if (items.length >= count) break;
+    }
+    if (!data.nextCursor) break;
+    cursor = data.nextCursor;
+  }
+  return { items: items.slice(0, count), totalPending };
+}
+
+async function reloadStickerReviewAfterMutation() {
+  await loadStickerReview(stickerLoadedCount, true);
 }
 
 function renderStickerReview(items) {
   const root = $('#sticker-review');
+  stickerLoadedCount = items.length || 10;
   root.replaceChildren();
   if (!items.length) {
     const empty = document.createElement('div');
@@ -407,7 +449,7 @@ function renderStickerReview(items) {
           method: 'POST',
           body: JSON.stringify({ groupId: item.groupId, metadata }),
         });
-        await loadStickerReview();
+        await reloadStickerReviewAfterMutation();
       } catch (err) {
         setStickerStatus(row, '保存或批准失败', true);
       } finally {
@@ -422,7 +464,7 @@ function renderStickerReview(items) {
         method: 'POST',
         body: JSON.stringify({ groupId: item.groupId, reason: 'console reject' }),
       });
-      await loadStickerReview();
+      await reloadStickerReviewAfterMutation();
     });
     save.addEventListener('click', async () => {
       save.disabled = true;

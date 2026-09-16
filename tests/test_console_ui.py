@@ -3,14 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_console_uses_wake_logs_and_structured_event_feed() -> None:
+def test_console_uses_merged_logs_and_structured_event_feed() -> None:
     page = (Path(__file__).resolve().parents[1] / "app" / "console" / "public" / "console.html").read_text(
         encoding="utf-8"
     )
 
-    assert "id=\"wake-logs\"" in page
-    assert "/api/wake-logs?" in page
-    assert "async function loadWakeLogs()" in page
+    assert "id=\"log-list\"" in page
+    assert "/api/logs?" in page
+    assert "async function loadLogs(reset = false)" in page
+    assert "data-log-type=\"all\"" in page
+    assert "logRequestId" in page
+    assert "requestId !== logRequestId" in page
+    assert "id=\"wake-logs\"" not in page
+    assert "id=\"audit\"" not in page
+    assert "/api/wake-logs?" not in page
+    assert "/api/audit?" not in page
     assert "eventLabels" in page
     assert "JSON.stringify(event)" not in page
     assert "id=\"review-group\"" not in page

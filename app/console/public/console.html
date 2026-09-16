@@ -184,12 +184,32 @@
   .sticker-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .sticker-tail { padding: 10px; text-align: center; color: var(--muted); font-size: 12px; }
   .sticker-tail button { min-width: 96px; }
+  .log-filters button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .log-list { display: grid; }
+  .log-item {
+    display: grid;
+    grid-template-columns: 150px 72px minmax(120px, 0.7fr) minmax(180px, 1fr) 100px;
+    gap: 10px;
+    align-items: start;
+    padding: 9px 14px;
+    border-bottom: 1px solid #e8ebe6;
+    font-size: 12px;
+  }
+  .log-time, .log-session, .log-detail { color: var(--muted); overflow-wrap: anywhere; }
+  .log-type { font-weight: 700; }
+  .log-type.wake { color: var(--teal); }
+  .log-type.audit { color: var(--amber); }
+  .log-title { font-weight: 600; overflow-wrap: anywhere; }
+  .log-result { overflow-wrap: anywhere; }
+  .log-tail { padding: 10px; text-align: center; color: var(--muted); font-size: 12px; }
+  .log-tail button { min-width: 96px; }
   @media (max-width: 900px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
     .layout { grid-template-columns: 1fr; }
     .sticker-card { grid-template-columns: 1fr; }
     .sticker-card img { width: 100%; max-height: 260px; }
     .sticker-form { grid-template-columns: 1fr; }
+    .log-item { grid-template-columns: 1fr; gap: 4px; }
   }
 </style>
 </head>
@@ -216,35 +236,21 @@
     </div>
   </section>
   <section class="panel">
-    <h2>唤醒日志</h2>
-    <div class="controls">
-      <label for="wake-session">会话</label>
-      <select id="wake-session"><option value="">全部会话</option></select>
-      <button id="wake-refresh" type="button">刷新</button>
-    </div>
-    <div style="overflow-x:auto">
-      <table>
-        <thead><tr><th>时间</th><th>会话</th><th>类别</th><th>判定</th><th>原因</th><th>概率</th><th>下次</th><th>Token</th></tr></thead>
-        <tbody id="wake-logs"></tbody>
-      </table>
-    </div>
-  </section>
-  <section class="panel">
-    <h2>审计</h2>
-    <div style="overflow-x:auto">
-      <table>
-        <thead><tr><th>时间</th><th>来源</th><th>动作</th><th>会话</th><th>详情</th><th>结果</th></tr></thead>
-        <tbody id="audit"></tbody>
-      </table>
-    </div>
-  </section>
-  <section class="panel">
     <h2>素材审核</h2>
     <div class="controls">
       <button id="review-refresh" type="button">刷新</button>
       <span id="review-summary" class="sub"></span>
     </div>
     <div id="sticker-review"><div class="empty">加载中</div></div>
+  </section>
+  <section class="panel">
+    <h2>日志时间线</h2>
+    <div class="controls log-filters">
+      <button type="button" data-log-type="all" class="active">全部</button>
+      <button type="button" data-log-type="wake">唤醒日志</button>
+      <button type="button" data-log-type="audit">审计日志</button>
+    </div>
+    <div id="log-list" class="log-list"><div class="empty">加载中</div></div>
   </section>
 </main>
 <script>
@@ -258,6 +264,13 @@ let stickerReviewLoading = false;
 let stickerReviewExhausted = false;
 let stickerObserver = null;
 const stickerPreviewObjectUrls = new Set();
+let logType = 'all';
+let logItems = [];
+let logCursor = null;
+let logLoading = false;
+let logExhausted = false;
+let logRequestId = 0;
+let logObserver = null;
 
 function setOnline(on) {
   $('#state-dot').classList.toggle('on', on);
@@ -272,27 +285,6 @@ function fmt(ms) {
 
 function fmtMs(ms) {
   return fmt(Number(ms || 0) / 1000);
-}
-
-function option(value, text) {
-  const item = document.createElement('option');
-  item.value = value;
-  item.textContent = text;
-  return item;
-}
-
-function syncSessionFilter(sessions) {
-  const select = $('#wake-session');
-  const selected = select.value;
-  select.replaceChildren(option('', '全部会话'));
-  for (const session of sessions) {
-    select.appendChild(option(session.id, session.id));
-  }
-  if (sessions.some((session) => session.id === selected)) {
-    select.value = selected;
-  } else {
-    select.value = '';
-  }
 }
 
 function badge(session) {
@@ -340,7 +332,7 @@ async function fetchAuthorizedBlob(path, retry = true) {
 }
 
 async function refresh() {
-  await Promise.all([loadHealth(), loadSessions(), loadStickerReview(), loadWakeLogs(), loadAudit()]);
+  await Promise.all([loadHealth(), loadSessions(), loadStickerReview(), loadLogs(true)]);
 }
 
 async function loadHealth() {
@@ -698,7 +690,6 @@ async function saveStickerMetadata(card, approving) {
 
 async function loadSessions() {
   const data = await api('/api/sessions');
-  syncSessionFilter(data.sessions);
   const box = $('#sessions');
   box.replaceChildren();
   if (!data.sessions.length) {
@@ -750,81 +741,132 @@ async function loadSessions() {
   }
 }
 
-async function loadWakeLogs() {
-  const sessionId = $('#wake-session').value;
-  const query = new URLSearchParams({ limit: '100' });
-  if (sessionId) query.set('session_id', sessionId);
-  const data = await api(`/api/wake-logs?${query}`);
-  const rows = $('#wake-logs');
-  rows.replaceChildren();
-  if (!data.items.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 8;
-    td.className = 'empty';
-    td.textContent = '暂无唤醒日志';
-    tr.appendChild(td);
-    rows.appendChild(tr);
-    return;
+async function loadLogs(reset = false) {
+  if (reset) {
+    logRequestId += 1;
+    logItems = [];
+    logCursor = null;
+    logLoading = false;
+    logExhausted = false;
+    $('#log-list').replaceChildren();
   }
-  for (const item of data.items) {
-    const tr = document.createElement('tr');
-    const probability = item.probability == null ? '-' : Number(item.probability).toFixed(2);
-    const tokens = item.total_tokens ? `${item.prompt_tokens || 0}/${item.completion_tokens || 0}/${item.total_tokens}` : '-';
-    const values = [
-      fmtMs(item.ts),
-      item.session_id || '-',
-      item.category || '-',
-      item.decided || '-',
-      item.reason || '-',
-      probability,
-      fmtMs(item.next_wake_at),
-      tokens,
-    ];
-    for (const value of values) {
-      const td = document.createElement('td');
-      td.textContent = value;
-      tr.appendChild(td);
+  if (logLoading || (!reset && logExhausted)) return;
+  const requestId = logRequestId;
+  logLoading = true;
+  updateLogTail();
+  try {
+    const query = new URLSearchParams({ type: logType, limit: '20' });
+    if (!reset && logCursor) query.set('cursor', logCursor);
+    const data = await api(`/api/logs?${query}`);
+    if (requestId !== logRequestId) return;
+    const seen = new Set(logItems.map((item) => item.id));
+    for (const item of data.items || []) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      logItems.push(item);
     }
-    rows.appendChild(tr);
+    logCursor = data.nextCursor || null;
+    logExhausted = !logCursor;
+    renderLogItems();
+  } catch (err) {
+    if (requestId === logRequestId && !logItems.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = '日志加载失败';
+      $('#log-list').replaceChildren(empty);
+    }
+  } finally {
+    if (requestId === logRequestId) {
+      logLoading = false;
+      updateLogTail();
+    }
   }
 }
 
-async function loadAudit() {
-  const data = await api('/api/audit?limit=100');
-  const rows = $('#audit');
-  rows.replaceChildren();
-  if (!data.items.length) {
-    const tr = document.createElement('tr');
-    const td = document.createElement('td');
-    td.colSpan = 6;
-    td.className = 'empty';
-    td.textContent = '暂无审计记录';
-    tr.appendChild(td);
-    rows.appendChild(tr);
+function renderLogItems() {
+  const root = $('#log-list');
+  root.replaceChildren();
+  if (!logItems.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无日志';
+    root.appendChild(empty);
     return;
   }
-  for (const item of data.items) {
-    const tr = document.createElement('tr');
-    const values = [
-      fmt(item.ts),
-      item.actor_type || '-',
-      item.action || '-',
-      item.session_id || '-',
-    ];
-    for (const value of values) {
-      const td = document.createElement('td');
-      td.textContent = value;
-      tr.appendChild(td);
-    }
-    const detail = document.createElement('td');
-    detail.className = 'detail';
-    detail.textContent = item.detail || '';
-    const result = document.createElement('td');
-    result.textContent = item.result || '-';
-    tr.append(detail, result);
-    rows.appendChild(tr);
+  for (const item of logItems) root.appendChild(createLogItem(item));
+}
+
+function createLogItem(item) {
+  const row = document.createElement('div');
+  row.className = 'log-item';
+  const type = document.createElement('div');
+  type.className = `log-type ${item.type}`;
+  type.textContent = item.type === 'wake' ? '唤醒' : '审计';
+  const time = document.createElement('div');
+  time.className = 'log-time';
+  time.textContent = fmtMs(item.timestamp);
+  const session = document.createElement('div');
+  session.className = 'log-session';
+  session.textContent = item.sessionId || '-';
+  const title = document.createElement('div');
+  title.className = 'log-title';
+  title.textContent = item.title || '-';
+  const result = document.createElement('div');
+  result.className = 'log-result';
+  result.textContent = item.result || '-';
+  const detail = document.createElement('div');
+  detail.className = 'log-detail';
+  detail.textContent = item.detail || '-';
+  row.append(time, type, session, title, result, detail);
+  return row;
+}
+
+function updateLogTail() {
+  const root = $('#log-list');
+  const existing = root.querySelector('.log-tail');
+  if (existing) existing.remove();
+  if (logLoading) {
+    root.appendChild(createLogTailText('加载中'));
+    return;
   }
+  if (logExhausted) {
+    root.appendChild(createLogTailText('已全部加载'));
+    return;
+  }
+  const observer = ensureLogObserver();
+  const tail = document.createElement('div');
+  tail.className = 'log-tail';
+  if (observer) {
+    const sentinel = document.createElement('div');
+    sentinel.dataset.role = 'log-sentinel';
+    sentinel.setAttribute('aria-hidden', 'true');
+    tail.appendChild(sentinel);
+    observer.observe(sentinel);
+  } else {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = '加载更多';
+    button.addEventListener('click', () => loadLogs(false));
+    tail.appendChild(button);
+  }
+  root.appendChild(tail);
+}
+
+function createLogTailText(text) {
+  const tail = document.createElement('div');
+  tail.className = 'log-tail';
+  tail.textContent = text;
+  return tail;
+}
+
+function ensureLogObserver() {
+  if (!('IntersectionObserver' in window)) return null;
+  if (!logObserver) {
+    logObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadLogs(false);
+    }, { rootMargin: '160px' });
+  }
+  return logObserver;
 }
 
 const eventLabels = {
@@ -935,14 +977,21 @@ async function connect() {
     const event = JSON.parse(message.data);
     if (event.type !== 'ping') renderFeed(event);
     if (event.type === 'session-updated') loadSessions();
-    if (event.type === 'wake-log') loadWakeLogs();
+    if (event.type === 'wake-log' && (logType === 'all' || logType === 'wake')) loadLogs(true);
   };
   ws = target;
 }
 
-$('#wake-session').addEventListener('change', loadWakeLogs);
-$('#wake-refresh').addEventListener('click', loadWakeLogs);
-$('#review-refresh').addEventListener('click', loadStickerReview);
+for (const button of document.querySelectorAll('button[data-log-type]')) {
+  button.addEventListener('click', () => {
+    logType = button.dataset.logType;
+    for (const candidate of document.querySelectorAll('button[data-log-type]')) {
+      candidate.classList.toggle('active', candidate === button);
+    }
+    loadLogs(true);
+  });
+}
+$('#review-refresh').addEventListener('click', () => loadStickerReview(stickerLoadedCount, true));
 $('#token-button').addEventListener('click', () => {
   if (!askToken()) return;
   if (ws) ws.close();

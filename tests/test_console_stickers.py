@@ -114,6 +114,8 @@ async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> N
             json={"groupId": "100000", "metadata": metadata},
         )
         media = await store.get_inbound_media(media_id)
+        groups = await store.get_inbound_media_groups(media_id)
+        remaining = client.get("/api/stickers/review?groupId=100000", headers=headers)
     finally:
         await store.close()
 
@@ -127,6 +129,8 @@ async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> N
     assert media is not None
     assert media["name"] == "无语猫"
     assert str(media["local_path"]).startswith("images/")
+    assert groups[0]["review_status"] == "approved"
+    assert remaining.json()["totalPending"] == 0
 
 
 @pytest.mark.parametrize(
@@ -247,6 +251,46 @@ async def test_console_sticker_reject_updates_local_path(tmp_path: Path) -> None
     assert media is not None
     assert media["status"] == "rejected"
     assert str(media["local_path"]).startswith("rejected/")
+
+
+async def test_console_sticker_group_reviews_are_isolated(tmp_path: Path) -> None:
+    client, store, media_id = await _client(tmp_path)
+    headers = {"authorization": "Bearer secret"}
+    try:
+        await store.touch_inbound_media_group(media_id, "200000", 2.0)
+        approve = client.post(
+            f"/api/stickers/{media_id}/approve",
+            headers=headers,
+            json={
+                "groupId": "100000",
+                "metadata": {"name": "共享素材", "tags": ["测试"]},
+            },
+        )
+        groups_after_approve = await store.get_inbound_media_groups(media_id)
+        review_other = client.get("/api/stickers/review?groupId=200000", headers=headers)
+        reject_other = client.post(
+            f"/api/stickers/{media_id}/reject",
+            headers=headers,
+            json={"groupId": "200000", "reason": "只拒绝另一个群"},
+        )
+        media = await store.get_inbound_media(media_id)
+        groups_after_reject = await store.get_inbound_media_groups(media_id)
+    finally:
+        await store.close()
+
+    assert approve.status_code == 200
+    assert reject_other.status_code == 200
+    assert {row["group_id"]: row["review_status"] for row in groups_after_approve} == {
+        "100000": "approved",
+        "200000": "pending_review",
+    }
+    assert review_other.json()["totalPending"] == 1
+    assert media is not None and media["status"] == "approved"
+    assert str(media["local_path"]).startswith("images/")
+    assert {row["group_id"]: row["review_status"] for row in groups_after_reject} == {
+        "100000": "approved",
+        "200000": "rejected",
+    }
 
 
 async def test_console_sticker_endpoints_require_auth(tmp_path: Path) -> None:

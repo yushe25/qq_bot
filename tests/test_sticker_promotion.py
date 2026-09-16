@@ -131,3 +131,19 @@ async def test_promotion_does_not_call_vision_without_group_authorization(tmp_pa
 
     assert status == "pending_review"
     assert tagger.calls == 0
+
+
+async def test_promotion_merges_scope_groups_for_shared_media(tmp_path: Path) -> None:
+    service, store, _, media_id = await _setup(tmp_path, 0.9)
+    try:
+        first = await service.approve(media_id, "100000")
+        second = await service.approve(media_id, "200000")
+    finally:
+        await store.close()
+
+    entries = load_manifest(tmp_path / "stickers" / "manifest.yaml")
+    assert first == "approved"
+    assert second == "approved"
+    assert len(entries) == 1
+    assert entries[0].scope_groups == ["100000", "200000"]
+    assert entries[0].source_group_ids == ["100000", "200000"]

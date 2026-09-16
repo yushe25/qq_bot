@@ -171,6 +171,12 @@ class ConsoleService:
             return "unavailable"
         status = await self.sticker_promotion.approve(media_id, group_id, metadata=metadata)
         if status == "approved":
+            await self.store.update_inbound_media_group_review(
+                media_id,
+                group_id,
+                "approved",
+                reviewed_by="console",
+            )
             await self.store.append_audit(
                 action="sticker_review_approved",
                 detail=f"media={media_id} group={group_id}",
@@ -183,14 +189,27 @@ class ConsoleService:
         media = await self.store.get_inbound_media(media_id)
         if media is None:
             return False
-        local_path = await self._move_to_rejected(media)
-        await self.store.update_inbound_media_status(
+        groups = await self.store.get_inbound_media_groups(media_id)
+        if not any(str(row["group_id"]) == group_id for row in groups):
+            return False
+        if not await self.store.update_inbound_media_group_review(
             media_id,
+            group_id,
             "rejected",
-            local_path=local_path,
             reviewed_by="console",
             reject_reason=reason[:200],
-        )
+        ):
+            return False
+        groups = await self.store.get_inbound_media_groups(media_id)
+        if all(str(row["review_status"]) == "rejected" for row in groups):
+            local_path = await self._move_to_rejected(media)
+            await self.store.update_inbound_media_status(
+                media_id,
+                "rejected",
+                local_path=local_path,
+                reviewed_by="console",
+                reject_reason=reason[:200],
+            )
         await self.store.append_audit(
             action="sticker_review_rejected",
             detail=f"media={media_id} group={group_id}",

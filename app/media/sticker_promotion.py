@@ -125,7 +125,22 @@ class StickerPromotionService:
         target.parent.mkdir(parents=True, exist_ok=True)
         with manifest_lock(self.manifest_path):
             entries = load_manifest(self.manifest_path) if self.manifest_path.exists() else []
-            sticker_id = _entry_id(entries, str(media["sha256"]))
+            content_hash = f"sha256:{media['sha256']}"
+            existing = next(
+                (
+                    item
+                    for item in entries
+                    if item.media_id == media_id or item.content_hash == content_hash
+                ),
+                None,
+            )
+            sticker_id = existing.id if existing is not None else _entry_id(entries, str(media["sha256"]))
+            source_group_ids = sorted(
+                set((existing.source_group_ids if existing is not None else []) + [group_id])
+            )
+            scope_groups = sorted(
+                set((existing.scope_groups if existing is not None else []) + [group_id])
+            )
             relative_file = target.relative_to(self.library_dir).as_posix()
             if not target.exists():
                 shutil.move(str(source), str(target))
@@ -141,11 +156,11 @@ class StickerPromotionService:
                     "scenes": values["scenes"],
                     "avoid_scenes": values["avoid_scenes"],
                     "tag_source": "auto",
-                    "content_hash": f"sha256:{media['sha256']}",
+                    "content_hash": content_hash,
                     "tag_confidence": media.get("tag_confidence"),
                     "source": "group_capture",
-                    "source_group_ids": [group_id],
-                    "scope_groups": [group_id],
+                    "source_group_ids": source_group_ids,
+                    "scope_groups": scope_groups,
                     "media_id": media_id,
                 }
             )

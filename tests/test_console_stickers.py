@@ -5,6 +5,7 @@ import struct
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -91,18 +92,26 @@ async def _add_review_media(
 async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> None:
     client, store, media_id = await _client(tmp_path)
     headers = {"authorization": "Bearer secret"}
+    metadata = {
+        "name": "无语猫",
+        "description": "白猫翻白眼",
+        "tags": ["无语", "猫"],
+        "moods": ["无语"],
+        "scenes": ["吐槽"],
+        "avoidScenes": ["严肃道歉"],
+    }
     try:
         review = client.get("/api/stickers/review?groupId=100000", headers=headers)
         preview = client.get(f"/api/stickers/{media_id}/preview", headers=headers)
         update = client.patch(
             f"/api/stickers/{media_id}/metadata",
             headers=headers,
-            json={"name": "无语猫", "tags": ["无语"], "moods": ["无语"], "scenes": ["吐槽"]},
+            json=metadata,
         )
         approve = client.post(
             f"/api/stickers/{media_id}/approve",
             headers=headers,
-            json={"groupId": "100000", "name": "无语猫", "tags": ["无语"]},
+            json={"groupId": "100000", "metadata": metadata},
         )
         media = await store.get_inbound_media(media_id)
     finally:
@@ -118,6 +127,54 @@ async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> N
     assert media is not None
     assert media["name"] == "无语猫"
     assert str(media["local_path"]).startswith("images/")
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"name": "x" * 81},
+        {"description": "x" * 121},
+        {"tags": [f"tag-{index}" for index in range(9)]},
+        {"tags": ["x" * 41]},
+        {"tags": ["无语", "无语"]},
+        {"description": "[CQ:image,file=http://evil]"},
+        {"description": "联系 13800138000"},
+    ],
+)
+async def test_console_sticker_metadata_rejects_invalid_values(
+    tmp_path: Path,
+    metadata: dict[str, object],
+) -> None:
+    client, store, media_id = await _client(tmp_path)
+    headers = {"authorization": "Bearer secret"}
+    try:
+        response = client.patch(
+            f"/api/stickers/{media_id}/metadata",
+            headers=headers,
+            json=metadata,
+        )
+        media = await store.get_inbound_media(media_id)
+    finally:
+        await store.close()
+
+    assert response.status_code == 422
+    assert media is not None and media["status"] == "pending_review"
+
+
+async def test_console_sticker_approve_validates_nested_metadata(tmp_path: Path) -> None:
+    client, store, media_id = await _client(tmp_path)
+    try:
+        response = client.post(
+            f"/api/stickers/{media_id}/approve",
+            headers={"authorization": "Bearer secret"},
+            json={"groupId": "100000", "metadata": {"tags": ["x" * 41]}},
+        )
+        media = await store.get_inbound_media(media_id)
+    finally:
+        await store.close()
+
+    assert response.status_code == 422
+    assert media is not None and media["status"] == "pending_review"
 
 
 async def test_console_sticker_review_aggregates_groups_and_paginates(tmp_path: Path) -> None:

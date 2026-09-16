@@ -13,3 +13,8 @@ def test_console_uses_wake_logs_and_structured_event_feed() -> None:
     assert "async function loadWakeLogs()" in page
     assert "eventLabels" in page
     assert "JSON.stringify(event)" not in page
+    assert "id=\"review-group\"" not in page
+    assert "async function saveStickerMetadata" in page
+    assert "metadataFromCard" in page
+    assert "avoidScenes: splitMetadataList" in page
+    assert "body: JSON.stringify({ groupId: item.groupId, metadata })" in page

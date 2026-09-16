@@ -10,14 +10,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config import ConsoleConfig
 from app.console.service import InvalidReviewCursor
+from app.safety.content_filter import ContentFilter
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 WS_TICKET_TTL_SECONDS = 60
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
+_METADATA_FILTER = ContentFilter()
 
 
 @dataclass(frozen=True)
@@ -30,16 +32,49 @@ class WakeBody(BaseModel):
     reason: str = "控制台强制唤醒"
 
 
+class StickerMetadataBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    name: str = Field(default="", max_length=80)
+    description: str = Field(default="", max_length=120)
+    tags: list[str] = Field(default_factory=list, max_length=8)
+    moods: list[str] = Field(default_factory=list, max_length=8)
+    scenes: list[str] = Field(default_factory=list, max_length=8)
+    avoid_scenes: list[str] = Field(default_factory=list, max_length=8, alias="avoidScenes")
+
+    @field_validator("name", "description")
+    @classmethod
+    def validate_sensitive_text(cls, value: str) -> str:
+        text = value.strip()
+        ok, _ = _METADATA_FILTER.check(text)
+        if not ok:
+            raise ValueError("metadata contains sensitive content")
+        return text
+
+    @field_validator("tags", "moods", "scenes", "avoid_scenes")
+    @classmethod
+    def validate_semantic_list(cls, values: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for value in values:
+            text = value.strip()
+            if not text:
+                raise ValueError("metadata entries must not be blank")
+            if len(text) > 40:
+                raise ValueError("metadata entries must be at most 40 characters")
+            ok, _ = _METADATA_FILTER.check(text)
+            if not ok:
+                raise ValueError("metadata contains sensitive content")
+            if text in cleaned:
+                raise ValueError("metadata entries must not contain duplicates")
+            cleaned.append(text)
+        return cleaned
+
+
 class StickerApproveBody(BaseModel):
     model_config = {"populate_by_name": True}
 
     group_id: str = Field(alias="groupId")
-    name: str = ""
-    description: str = ""
-    tags: list[str] = []
-    moods: list[str] = []
-    scenes: list[str] = []
-    avoid_scenes: list[str] = Field(default_factory=list, alias="avoidScenes")
+    metadata: StickerMetadataBody = Field(default_factory=StickerMetadataBody)
 
 
 class StickerRejectBody(BaseModel):
@@ -47,17 +82,6 @@ class StickerRejectBody(BaseModel):
 
     group_id: str = Field(alias="groupId")
     reason: str = ""
-
-
-class StickerMetadataBody(BaseModel):
-    model_config = {"populate_by_name": True}
-
-    name: str = ""
-    description: str = ""
-    tags: list[str] = []
-    moods: list[str] = []
-    scenes: list[str] = []
-    avoid_scenes: list[str] = Field(default_factory=list, alias="avoidScenes")
 
 
 def build_console_router(config: ConsoleConfig) -> APIRouter:
@@ -226,14 +250,7 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
         status = await runtime.console.approve_sticker(
             media_id,
             body.group_id,
-            {
-                "name": body.name,
-                "description": body.description,
-                "tags": body.tags,
-                "moods": body.moods,
-                "scenes": body.scenes,
-                "avoid_scenes": body.avoid_scenes,
-            },
+            body.metadata.model_dump(),
         )
         if status != "approved":
             raise HTTPException(status_code=400, detail=status)

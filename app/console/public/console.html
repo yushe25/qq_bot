@@ -127,9 +127,57 @@
   th { background: #f1f3ef; font-weight: 600; white-space: nowrap; }
   td.detail { min-width: 260px; overflow-wrap: anywhere; }
   .empty { padding: 16px 14px; color: var(--muted); }
+  .sticker-list { display: grid; gap: 12px; padding: 12px; }
+  .sticker-card {
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 14px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px;
+  }
+  .sticker-card img {
+    width: 150px;
+    height: 150px;
+    object-fit: contain;
+    background: #eef1ec;
+    border-radius: 4px;
+  }
+  .sticker-copy { display: grid; gap: 6px; min-width: 0; }
+  .sticker-title { font-weight: 700; overflow-wrap: anywhere; }
+  .sticker-meta, .sticker-semantics, .sticker-status {
+    color: var(--muted);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .sticker-status.error { color: var(--red); }
+  .sticker-edit { border-top: 1px solid #e8ebe6; padding-top: 8px; }
+  .sticker-edit summary { cursor: pointer; font-size: 12px; color: var(--teal); }
+  .sticker-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .sticker-form label { display: grid; gap: 3px; color: var(--muted); font-size: 11px; }
+  .sticker-form label.wide { grid-column: 1 / -1; }
+  .sticker-form input, .sticker-form textarea {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 5px 7px;
+    color: var(--ink);
+    background: #fff;
+    font: inherit;
+  }
+  .sticker-form textarea { min-height: 52px; resize: vertical; }
+  .sticker-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   @media (max-width: 900px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
     .layout { grid-template-columns: 1fr; }
+    .sticker-card { grid-template-columns: 1fr; }
+    .sticker-card img { width: 100%; max-height: 260px; }
+    .sticker-form { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -181,11 +229,10 @@
   <section class="panel">
     <h2>素材审核</h2>
     <div class="controls">
-      <label for="review-group">群 ID</label>
-      <input id="review-group" type="text" inputmode="numeric" placeholder="100000">
       <button id="review-refresh" type="button">刷新</button>
+      <span id="review-summary" class="sub"></span>
     </div>
-    <div id="sticker-review" class="feed"><div class="empty">输入群 ID 后刷新</div></div>
+    <div id="sticker-review"><div class="empty">加载中</div></div>
   </section>
 </main>
 <script>
@@ -262,7 +309,7 @@ async function api(path, options = {}, retry = true) {
 }
 
 async function refresh() {
-  await Promise.all([loadHealth(), loadSessions(), loadWakeLogs(), loadAudit()]);
+  await Promise.all([loadHealth(), loadSessions(), loadStickerReview(), loadWakeLogs(), loadAudit()]);
 }
 
 async function loadHealth() {
@@ -278,13 +325,9 @@ async function loadHealth() {
 }
 
 async function loadStickerReview() {
-  const groupId = $('#review-group').value.trim();
-  if (!groupId) {
-    $('#sticker-review').innerHTML = '<div class="empty">输入群 ID 后刷新</div>';
-    return;
-  }
   try {
-    const data = await api(`/api/stickers/review?groupId=${encodeURIComponent(groupId)}`);
+    const data = await api('/api/stickers/review?limit=10');
+    $('#review-summary').textContent = `待审核 ${data.totalPending ?? 0}`;
     renderStickerReview(data.items || []);
   } catch (err) {
     $('#sticker-review').innerHTML = '<div class="empty">加载失败</div>';
@@ -301,48 +344,153 @@ function renderStickerReview(items) {
     root.appendChild(empty);
     return;
   }
-  const list = document.createElement('ul');
+  const list = document.createElement('div');
+  list.className = 'sticker-list';
   for (const item of items) {
-    const row = document.createElement('li');
+    const row = document.createElement('article');
+    row.className = 'sticker-card';
+    row.dataset.mediaId = String(item.mediaId);
+    row.dataset.groupId = item.groupId;
     const image = document.createElement('img');
-    image.src = `/api/stickers/${item.id}/preview`;
+    image.src = item.previewUrl || `/api/stickers/${item.mediaId}/preview`;
     image.alt = '';
-    image.style.maxWidth = '120px';
-    image.style.maxHeight = '120px';
     const detail = document.createElement('div');
+    detail.className = 'sticker-copy';
     const title = document.createElement('b');
-    title.textContent = item.name || `素材 ${item.id}`;
+    title.className = 'sticker-title';
+    title.textContent = item.name || `素材 ${item.mediaId}`;
     const meta = document.createElement('span');
-    meta.className = 'detail';
-    meta.textContent = `${item.mimeType} · ${item.byteSize} bytes · 置信度 ${item.tagConfidence ?? '-'}`;
+    meta.className = 'sticker-meta';
+    meta.textContent = `来源群 ${item.groupId} · ${fmtMs(item.firstSeenAt)} · 重复 ${item.seenCount} 次 · ${item.mimeType} · ${item.byteSize} bytes · 置信度 ${item.tagConfidence ?? '-'}`;
+    const semantics = document.createElement('span');
+    semantics.className = 'sticker-semantics';
+    semantics.textContent = [
+      metadataLine('标签', item.tags),
+      metadataLine('情绪', item.moods),
+      metadataLine('适合', item.scenes),
+      metadataLine('避免', item.avoidScenes),
+    ].filter(Boolean).join(' · ');
+    const edit = document.createElement('details');
+    edit.className = 'sticker-edit';
+    const editSummary = document.createElement('summary');
+    editSummary.textContent = '编辑元数据';
+    const form = document.createElement('div');
+    form.className = 'sticker-form';
+    form.append(
+      metadataInput('name', '名称', item.name || '', false),
+      metadataInput('description', '说明', item.description || '', true),
+      metadataInput('tags', '标签', (item.tags || []).join('，'), false),
+      metadataInput('moods', '情绪', (item.moods || []).join('，'), false),
+      metadataInput('scenes', '适合场景', (item.scenes || []).join('，'), false),
+      metadataInput('avoidScenes', '避免场景', (item.avoidScenes || []).join('，'), false),
+    );
+    const editActions = document.createElement('div');
+    editActions.className = 'sticker-actions wide';
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.textContent = '保存修改';
+    const status = document.createElement('span');
+    status.className = 'sticker-status';
+    editActions.append(save, status);
+    form.appendChild(editActions);
+    edit.append(editSummary, form);
     const actions = document.createElement('div');
-    actions.className = 'actions';
+    actions.className = 'sticker-actions';
     const approve = document.createElement('button');
     approve.type = 'button';
     approve.textContent = '批准';
     approve.addEventListener('click', async () => {
-      await api(`/api/stickers/${item.id}/approve`, {
-        method: 'POST',
-        body: JSON.stringify({ groupId: $('#review-group').value.trim() }),
-      });
-      loadStickerReview();
+      approve.disabled = true;
+      try {
+        const metadata = await saveStickerMetadata(row, true);
+        await api(`/api/stickers/${item.mediaId}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({ groupId: item.groupId, metadata }),
+        });
+        await loadStickerReview();
+      } catch (err) {
+        setStickerStatus(row, '保存或批准失败', true);
+      } finally {
+        approve.disabled = false;
+      }
     });
     const reject = document.createElement('button');
     reject.type = 'button';
     reject.textContent = '拒绝';
     reject.addEventListener('click', async () => {
-      await api(`/api/stickers/${item.id}/reject`, {
+      await api(`/api/stickers/${item.mediaId}/reject`, {
         method: 'POST',
-        body: JSON.stringify({ groupId: $('#review-group').value.trim(), reason: 'console reject' }),
+        body: JSON.stringify({ groupId: item.groupId, reason: 'console reject' }),
       });
-      loadStickerReview();
+      await loadStickerReview();
+    });
+    save.addEventListener('click', async () => {
+      save.disabled = true;
+      try {
+        await saveStickerMetadata(row, false);
+        setStickerStatus(row, '已保存');
+      } catch (err) {
+        setStickerStatus(row, '保存失败', true);
+      } finally {
+        save.disabled = false;
+      }
     });
     actions.append(approve, reject);
-    detail.append(title, meta, actions);
+    detail.append(title, meta, semantics, edit, actions);
     row.append(image, detail);
     list.appendChild(row);
   }
   root.appendChild(list);
+}
+
+function metadataLine(label, values) {
+  const items = Array.isArray(values) ? values.filter(Boolean) : [];
+  return items.length ? `${label}：${items.join('、')}` : '';
+}
+
+function metadataInput(field, labelText, value, wide) {
+  const label = document.createElement('label');
+  if (wide) label.classList.add('wide');
+  const text = document.createElement('span');
+  text.textContent = labelText;
+  const input = document.createElement(wide ? 'textarea' : 'input');
+  input.dataset.field = field;
+  input.value = value;
+  label.append(text, input);
+  return label;
+}
+
+function splitMetadataList(value) {
+  return value.split(/[,，]/).map((item) => item.trim()).filter(Boolean);
+}
+
+function metadataFromCard(card) {
+  const value = (field) => card.querySelector(`[data-field="${field}"]`).value.trim();
+  return {
+    name: value('name'),
+    description: value('description'),
+    tags: splitMetadataList(value('tags')),
+    moods: splitMetadataList(value('moods')),
+    scenes: splitMetadataList(value('scenes')),
+    avoidScenes: splitMetadataList(value('avoidScenes')),
+  };
+}
+
+function setStickerStatus(card, text, error = false) {
+  const status = card.querySelector('.sticker-status');
+  if (!status) return;
+  status.textContent = text;
+  status.classList.toggle('error', error);
+}
+
+async function saveStickerMetadata(card, approving) {
+  const metadata = metadataFromCard(card);
+  await api(`/api/stickers/${card.dataset.mediaId}/metadata`, {
+    method: 'PATCH',
+    body: JSON.stringify(metadata),
+  });
+  if (!approving) setStickerStatus(card, '已保存');
+  return metadata;
 }
 
 async function loadSessions() {

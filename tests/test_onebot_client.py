@@ -231,6 +231,66 @@ async def test_get_group_members_accepts_members_field(monkeypatch: pytest.Monke
     assert result == members
 
 
+async def test_gateway_member_cache_reuses_and_invalidates() -> None:
+    gateway = OneBotV11Gateway(QQConfig())
+    calls = 0
+
+    async def fake_post(action: str, params: dict[str, Any]) -> list[dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        return [{"user_id": 10001, "nickname": "alice"}]
+
+    gateway._post = fake_post  # type: ignore[method-assign]
+    assert await gateway.get_group_members("100000") == [{"user_id": 10001, "nickname": "alice"}]
+    assert await gateway.get_group_members("100000") == [{"user_id": 10001, "nickname": "alice"}]
+    assert calls == 1
+
+    gateway._observe_cache_payload(
+        {
+            "post_type": "notice",
+            "notice_type": "group_increase",
+            "group_id": 100000,
+        }
+    )
+    await gateway.get_group_members("100000")
+    assert calls == 2
+
+
+async def test_gateway_history_cache_updates_from_new_message() -> None:
+    gateway = OneBotV11Gateway(QQConfig())
+    calls = 0
+
+    async def fake_post(action: str, params: dict[str, Any]) -> list[dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        return [{"message_id": 1, "raw_message": "old"}]
+
+    gateway._post = fake_post  # type: ignore[method-assign]
+    assert await gateway.get_group_history("100000", limit=1) == [
+        {"message_id": 1, "raw_message": "old"}
+    ]
+    gateway._observe_cache_payload(
+        {
+            "post_type": "message",
+            "group_id": 100000,
+            "message_id": 2,
+            "message": [{"type": "text", "data": {"text": "new"}}],
+            "raw_message": "new",
+        }
+    )
+    assert await gateway.get_group_history("100000", limit=2) == [
+        {"message_id": 1, "raw_message": "old"},
+        {
+            "post_type": "message",
+            "group_id": 100000,
+            "message_id": 2,
+            "message": [{"type": "text", "data": {"text": "new"}}],
+            "raw_message": "new",
+        },
+    ]
+    assert calls == 1
+
+
 async def test_fetch_image_segment_prefers_get_image(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = b"GIF89a" + struct.pack("<HH", 1, 1) + b"\x00\x00\x00"
     captured: dict[str, Any] = {}

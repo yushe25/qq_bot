@@ -19,6 +19,7 @@ from app.config import QQConfig
 from app.domain.types import MessageSegment
 from app.platform.gateway import EventHandler
 from app.platform.qq.event_normalizer import normalize
+from app.platform.qq.read_cache import GroupReadCache
 
 logger = logging.getLogger("qqf.onebot")
 
@@ -31,6 +32,7 @@ class OneBotV11Gateway:
         self._http_url = config.http_url.rstrip("/")
         self._stopping = False
         self._reconnect_task: asyncio.Task[None] | None = None
+        self.read_cache = GroupReadCache()
 
     def on_event(self, handler: EventHandler) -> None:
         self._handler = handler
@@ -81,6 +83,7 @@ class OneBotV11Gateway:
         async for raw in self._ws:
             try:
                 payload = json.loads(raw)
+                self._observe_cache_payload(payload)
                 event = normalize(payload)
                 if self._handler:
                     result = self._handler(event)
@@ -188,15 +191,34 @@ class OneBotV11Gateway:
         return await _download_public_image(url, max_bytes=max_bytes, timeout=10.0)
 
     async def get_group_history(self, group_id: str, limit: int = 20, message_seq: int | None = None) -> list[dict[str, object]]:
+        return await self.read_cache.get_history(
+            group_id,
+            limit,
+            lambda: self._fetch_group_history(group_id, message_seq=message_seq),
+            message_seq=message_seq,
+        )
+
+    async def _fetch_group_history(
+        self,
+        group_id: str,
+        *,
+        message_seq: int | None = None,
+    ) -> list[dict[str, object]]:
         params: dict[str, Any] = {"group_id": int(group_id)}
         if message_seq is not None:
             params["message_seq"] = message_seq
         data = await self._post("get_group_msg_history", params)
         if isinstance(data, dict):
             data = data.get("messages", data.get("data", []))
-        return _dict_list(data)[-limit:]
+        return _dict_list(data)[-self.read_cache.history_limit :]
 
     async def get_group_members(self, group_id: str) -> list[dict[str, object]]:
+        return await self.read_cache.get_members(
+            group_id,
+            lambda: self._fetch_group_members(group_id),
+        )
+
+    async def _fetch_group_members(self, group_id: str) -> list[dict[str, object]]:
         data = await self._post("get_group_member_list", {"group_id": int(group_id)})
         if isinstance(data, list):
             return _dict_list(data)
@@ -208,6 +230,24 @@ class OneBotV11Gateway:
             if isinstance(members, list):
                 return _dict_list(members)
         return []
+
+    def _observe_cache_payload(self, payload: dict[str, Any]) -> None:
+        post_type = str(payload.get("post_type") or "")
+        group_id = str(payload.get("group_id") or "")
+        if not group_id:
+            return
+        if post_type == "message":
+            message = payload.get("message")
+            if isinstance(message, (str, list, dict)):
+                self.read_cache.observe_message(group_id, payload)
+            return
+        if post_type == "notice" and str(payload.get("notice_type") or "") in {
+            "group_increase",
+            "group_decrease",
+            "group_admin",
+            "group_card",
+        }:
+            self.read_cache.invalidate_members(group_id)
 
 
 def _dict_result(value: object) -> dict[str, object]:

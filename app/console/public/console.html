@@ -172,6 +172,8 @@
   }
   .sticker-form textarea { min-height: 52px; resize: vertical; }
   .sticker-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .sticker-tail { padding: 10px; text-align: center; color: var(--muted); font-size: 12px; }
+  .sticker-tail button { min-width: 96px; }
   @media (max-width: 900px) {
     .stats { grid-template-columns: repeat(2, 1fr); }
     .layout { grid-template-columns: 1fr; }
@@ -240,6 +242,11 @@ const $ = (sel) => document.querySelector(sel);
 let ws = null;
 let token = sessionStorage.getItem('qqfToken') || '';
 let stickerLoadedCount = 10;
+let stickerItems = [];
+let stickerReviewCursor = null;
+let stickerReviewLoading = false;
+let stickerReviewExhausted = false;
+let stickerObserver = null;
 
 function setOnline(on) {
   $('#state-dot').classList.toggle('on', on);
@@ -331,8 +338,11 @@ async function loadStickerReview(count = stickerLoadedCount, preserveScroll = tr
   const rootScrollTop = root.scrollTop;
   try {
     const data = await fetchStickerReviewItems(Math.max(10, Number(count) || 10));
+    stickerItems = data.items || [];
+    stickerReviewCursor = data.nextCursor;
+    stickerReviewExhausted = !data.nextCursor;
     $('#review-summary').textContent = `待审核 ${data.totalPending ?? 0}`;
-    renderStickerReview(data.items || []);
+    renderStickerReview(stickerItems);
     if (preserveScroll) {
       requestAnimationFrame(() => {
         root.scrollTop = rootScrollTop;
@@ -348,6 +358,7 @@ async function fetchStickerReviewItems(count) {
   const items = [];
   const seen = new Set();
   let cursor = null;
+  let nextCursor = null;
   let totalPending = 0;
   while (items.length < count) {
     const remaining = count - items.length;
@@ -356,6 +367,7 @@ async function fetchStickerReviewItems(count) {
     if (cursor) query.set('cursor', cursor);
     const data = await api(`/api/stickers/review?${query}`);
     totalPending = Number(data.totalPending || 0);
+    nextCursor = data.nextCursor || null;
     const pageItems = data.items || [];
     if (!pageItems.length) break;
     for (const item of pageItems) {
@@ -365,10 +377,10 @@ async function fetchStickerReviewItems(count) {
       items.push(item);
       if (items.length >= count) break;
     }
-    if (!data.nextCursor) break;
-    cursor = data.nextCursor;
+    if (!nextCursor) break;
+    cursor = nextCursor;
   }
-  return { items: items.slice(0, count), totalPending };
+  return { items: items.slice(0, count), nextCursor, totalPending };
 }
 
 async function reloadStickerReviewAfterMutation() {
@@ -389,100 +401,184 @@ function renderStickerReview(items) {
   const list = document.createElement('div');
   list.className = 'sticker-list';
   for (const item of items) {
-    const row = document.createElement('article');
-    row.className = 'sticker-card';
-    row.dataset.mediaId = String(item.mediaId);
-    row.dataset.groupId = item.groupId;
-    const image = document.createElement('img');
-    image.src = item.previewUrl || `/api/stickers/${item.mediaId}/preview`;
-    image.alt = '';
-    const detail = document.createElement('div');
-    detail.className = 'sticker-copy';
-    const title = document.createElement('b');
-    title.className = 'sticker-title';
-    title.textContent = item.name || `素材 ${item.mediaId}`;
-    const meta = document.createElement('span');
-    meta.className = 'sticker-meta';
-    meta.textContent = `来源群 ${item.groupId} · ${fmtMs(item.firstSeenAt)} · 重复 ${item.seenCount} 次 · ${item.mimeType} · ${item.byteSize} bytes · 置信度 ${item.tagConfidence ?? '-'}`;
-    const semantics = document.createElement('span');
-    semantics.className = 'sticker-semantics';
-    semantics.textContent = [
-      metadataLine('标签', item.tags),
-      metadataLine('情绪', item.moods),
-      metadataLine('适合', item.scenes),
-      metadataLine('避免', item.avoidScenes),
-    ].filter(Boolean).join(' · ');
-    const edit = document.createElement('details');
-    edit.className = 'sticker-edit';
-    const editSummary = document.createElement('summary');
-    editSummary.textContent = '编辑元数据';
-    const form = document.createElement('div');
-    form.className = 'sticker-form';
-    form.append(
-      metadataInput('name', '名称', item.name || '', false),
-      metadataInput('description', '说明', item.description || '', true),
-      metadataInput('tags', '标签', (item.tags || []).join('，'), false),
-      metadataInput('moods', '情绪', (item.moods || []).join('，'), false),
-      metadataInput('scenes', '适合场景', (item.scenes || []).join('，'), false),
-      metadataInput('avoidScenes', '避免场景', (item.avoidScenes || []).join('，'), false),
-    );
-    const editActions = document.createElement('div');
-    editActions.className = 'sticker-actions wide';
-    const save = document.createElement('button');
-    save.type = 'button';
-    save.textContent = '保存修改';
-    const status = document.createElement('span');
-    status.className = 'sticker-status';
-    editActions.append(save, status);
-    form.appendChild(editActions);
-    edit.append(editSummary, form);
-    const actions = document.createElement('div');
-    actions.className = 'sticker-actions';
-    const approve = document.createElement('button');
-    approve.type = 'button';
-    approve.textContent = '批准';
-    approve.addEventListener('click', async () => {
-      approve.disabled = true;
-      try {
-        const metadata = await saveStickerMetadata(row, true);
-        await api(`/api/stickers/${item.mediaId}/approve`, {
-          method: 'POST',
-          body: JSON.stringify({ groupId: item.groupId, metadata }),
-        });
-        await reloadStickerReviewAfterMutation();
-      } catch (err) {
-        setStickerStatus(row, '保存或批准失败', true);
-      } finally {
-        approve.disabled = false;
-      }
-    });
-    const reject = document.createElement('button');
-    reject.type = 'button';
-    reject.textContent = '拒绝';
-    reject.addEventListener('click', async () => {
-      await api(`/api/stickers/${item.mediaId}/reject`, {
-        method: 'POST',
-        body: JSON.stringify({ groupId: item.groupId, reason: 'console reject' }),
-      });
-      await reloadStickerReviewAfterMutation();
-    });
-    save.addEventListener('click', async () => {
-      save.disabled = true;
-      try {
-        await saveStickerMetadata(row, false);
-        setStickerStatus(row, '已保存');
-      } catch (err) {
-        setStickerStatus(row, '保存失败', true);
-      } finally {
-        save.disabled = false;
-      }
-    });
-    actions.append(approve, reject);
-    detail.append(title, meta, semantics, edit, actions);
-    row.append(image, detail);
-    list.appendChild(row);
+    list.appendChild(createStickerReviewCard(item));
   }
   root.appendChild(list);
+  root.appendChild(createStickerReviewTail());
+  updateStickerReviewTail();
+}
+
+function createStickerReviewCard(item) {
+  const row = document.createElement('article');
+  row.className = 'sticker-card';
+  row.dataset.mediaId = String(item.mediaId);
+  row.dataset.groupId = item.groupId;
+  const image = document.createElement('img');
+  image.src = item.previewUrl || `/api/stickers/${item.mediaId}/preview`;
+  image.alt = '';
+  const detail = document.createElement('div');
+  detail.className = 'sticker-copy';
+  const title = document.createElement('b');
+  title.className = 'sticker-title';
+  title.textContent = item.name || `素材 ${item.mediaId}`;
+  const meta = document.createElement('span');
+  meta.className = 'sticker-meta';
+  meta.textContent = `来源群 ${item.groupId} · ${fmtMs(item.firstSeenAt)} · 重复 ${item.seenCount} 次 · ${item.mimeType} · ${item.byteSize} bytes · 置信度 ${item.tagConfidence ?? '-'}`;
+  const semantics = document.createElement('span');
+  semantics.className = 'sticker-semantics';
+  semantics.textContent = [
+    metadataLine('标签', item.tags),
+    metadataLine('情绪', item.moods),
+    metadataLine('适合', item.scenes),
+    metadataLine('避免', item.avoidScenes),
+  ].filter(Boolean).join(' · ');
+  const edit = document.createElement('details');
+  edit.className = 'sticker-edit';
+  const editSummary = document.createElement('summary');
+  editSummary.textContent = '编辑元数据';
+  const form = document.createElement('div');
+  form.className = 'sticker-form';
+  form.append(
+    metadataInput('name', '名称', item.name || '', false),
+    metadataInput('description', '说明', item.description || '', true),
+    metadataInput('tags', '标签', (item.tags || []).join('，'), false),
+    metadataInput('moods', '情绪', (item.moods || []).join('，'), false),
+    metadataInput('scenes', '适合场景', (item.scenes || []).join('，'), false),
+    metadataInput('avoidScenes', '避免场景', (item.avoidScenes || []).join('，'), false),
+  );
+  const editActions = document.createElement('div');
+  editActions.className = 'sticker-actions wide';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.textContent = '保存修改';
+  const status = document.createElement('span');
+  status.className = 'sticker-status';
+  editActions.append(save, status);
+  form.appendChild(editActions);
+  edit.append(editSummary, form);
+  const actions = document.createElement('div');
+  actions.className = 'sticker-actions';
+  const approve = document.createElement('button');
+  approve.type = 'button';
+  approve.textContent = '批准';
+  approve.addEventListener('click', async () => {
+    approve.disabled = true;
+    try {
+      const metadata = await saveStickerMetadata(row, true);
+      await api(`/api/stickers/${item.mediaId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ groupId: item.groupId, metadata }),
+      });
+      await reloadStickerReviewAfterMutation();
+    } catch (err) {
+      setStickerStatus(row, '保存或批准失败', true);
+    } finally {
+      approve.disabled = false;
+    }
+  });
+  const reject = document.createElement('button');
+  reject.type = 'button';
+  reject.textContent = '拒绝';
+  reject.addEventListener('click', async () => {
+    await api(`/api/stickers/${item.mediaId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ groupId: item.groupId, reason: 'console reject' }),
+    });
+    await reloadStickerReviewAfterMutation();
+  });
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      await saveStickerMetadata(row, false);
+      setStickerStatus(row, '已保存');
+    } catch (err) {
+      setStickerStatus(row, '保存失败', true);
+    } finally {
+      save.disabled = false;
+    }
+  });
+  actions.append(approve, reject);
+  detail.append(title, meta, semantics, edit, actions);
+  row.append(image, detail);
+  return row;
+}
+
+function createStickerReviewTail() {
+  const tail = document.createElement('div');
+  tail.id = 'sticker-tail';
+  tail.className = 'sticker-tail';
+  return tail;
+}
+
+function updateStickerReviewTail() {
+  const tail = $('#sticker-tail');
+  if (!tail) return;
+  tail.replaceChildren();
+  if (stickerReviewLoading) {
+    tail.textContent = '加载中';
+    return;
+  }
+  if (stickerReviewExhausted) {
+    tail.textContent = '已全部加载';
+    return;
+  }
+  const observer = ensureStickerObserver();
+  if (observer) {
+    const sentinel = document.createElement('div');
+    sentinel.dataset.role = 'sticker-sentinel';
+    sentinel.setAttribute('aria-hidden', 'true');
+    tail.appendChild(sentinel);
+    observer.observe(sentinel);
+    return;
+  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = '加载更多';
+  button.addEventListener('click', loadNextStickerReviewPage);
+  tail.appendChild(button);
+}
+
+function ensureStickerObserver() {
+  if (!('IntersectionObserver' in window)) return null;
+  if (!stickerObserver) {
+    stickerObserver = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) loadNextStickerReviewPage();
+    }, { rootMargin: '160px' });
+  }
+  return stickerObserver;
+}
+
+async function loadNextStickerReviewPage() {
+  if (stickerReviewLoading || stickerReviewExhausted) return;
+  stickerReviewLoading = true;
+  updateStickerReviewTail();
+  try {
+    const query = new URLSearchParams({ limit: '10' });
+    if (stickerReviewCursor) query.set('cursor', stickerReviewCursor);
+    const data = await api(`/api/stickers/review?${query}`);
+    const seen = new Set(stickerItems.map((item) => `${item.mediaId}:${item.groupId}`));
+    const added = [];
+    for (const item of data.items || []) {
+      const key = `${item.mediaId}:${item.groupId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      stickerItems.push(item);
+      added.push(item);
+    }
+    stickerLoadedCount = stickerItems.length || 10;
+    stickerReviewCursor = data.nextCursor || null;
+    stickerReviewExhausted = !stickerReviewCursor;
+    $('#review-summary').textContent = `待审核 ${data.totalPending ?? 0}`;
+    const list = $('#sticker-review .sticker-list');
+    if (list) {
+      for (const item of added) list.appendChild(createStickerReviewCard(item));
+    }
+  } catch (err) {
+    stickerReviewExhausted = false;
+  } finally {
+    stickerReviewLoading = false;
+    updateStickerReviewTail();
+  }
 }
 
 function metadataLine(label, values) {

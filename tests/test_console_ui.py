@@ -21,3 +21,8 @@ def test_console_uses_wake_logs_and_structured_event_feed() -> None:
     assert "let stickerLoadedCount = 10;" in page
     assert "async function reloadStickerReviewAfterMutation()" in page
     assert "window.scrollTo({ top: scrollY })" in page
+    assert "let stickerReviewCursor = null;" in page
+    assert "new IntersectionObserver" in page
+    assert "async function loadNextStickerReviewPage()" in page
+    assert "button.textContent = '加载更多'" in page
+    assert "tail.textContent = '已全部加载'" in page

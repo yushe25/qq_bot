@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
 from app.config import ConsoleConfig
+from app.console.service import InvalidReviewCursor
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 WS_TICKET_TTL_SECONDS = 60
@@ -195,10 +196,21 @@ def build_console_router(config: ConsoleConfig) -> APIRouter:
     @router.get("/api/stickers/review", dependencies=[Depends(require_auth)])
     async def sticker_review(
         request: Request,
-        group_id: str = Query(..., alias="groupId"),
+        group_id: str | None = Query(default=None, alias="groupId"),
+        limit: int = Query(default=10, ge=10, le=50),
+        cursor: str | None = Query(default=None),
     ) -> dict[str, Any]:
         runtime = _runtime(request)
-        return {"items": await runtime.console.list_sticker_review(group_id)}
+        try:
+            return await runtime.console.list_sticker_review(
+                group_id,
+                limit=limit,
+                cursor=cursor,
+            )
+        except InvalidReviewCursor as exc:
+            raise HTTPException(status_code=400, detail="invalid cursor") from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     @router.get("/api/stickers/{media_id}/preview", dependencies=[Depends(require_auth)])
     async def sticker_preview(request: Request, media_id: int) -> FileResponse:

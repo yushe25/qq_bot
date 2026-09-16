@@ -830,18 +830,94 @@ class StateStore:
             ),
         )
 
-    async def list_inbound_media_for_review(self, group_id: str, status: str = "pending_review") -> list[dict[str, Any]]:
-        return await self._query(
-            """
+    async def list_inbound_media_for_review(
+        self,
+        allowed_groups: Sequence[str],
+        *,
+        group_id: str | None = None,
+        limit: int = 10,
+        cursor: tuple[float, int, str] | None = None,
+        status: str = "pending_review",
+    ) -> tuple[list[dict[str, Any]], bool]:
+        groups = [str(item) for item in allowed_groups if str(item)]
+        if not groups:
+            return [], False
+
+        where = ["g.review_status = ?"]
+        params: list[Any] = [status]
+        if group_id is not None:
+            where.append("g.group_id = ?")
+            params.append(group_id)
+        else:
+            where.append(f"g.group_id IN ({','.join('?' for _ in groups)})")
+            params.extend(groups)
+        if cursor is not None:
+            first_seen_at, media_id, cursor_group_id = cursor
+            where.append(
+                """
+                (
+                    g.first_seen_at < ?
+                    OR (g.first_seen_at = ? AND m.id < ?)
+                    OR (g.first_seen_at = ? AND m.id = ? AND g.group_id < ?)
+                )
+                """
+            )
+            params.extend(
+                [
+                    first_seen_at,
+                    first_seen_at,
+                    media_id,
+                    first_seen_at,
+                    media_id,
+                    cursor_group_id,
+                ]
+            )
+
+        rows = await self._query(
+            f"""
             SELECT m.*, g.group_id, g.first_seen_at AS group_first_seen_at,
-                   g.last_seen_at AS group_last_seen_at, g.seen_count
+                   g.last_seen_at AS group_last_seen_at, g.seen_count,
+                   g.review_status, g.reviewed_at AS group_reviewed_at,
+                   g.reviewed_by AS group_reviewed_by,
+                   g.reject_reason AS group_reject_reason
             FROM inbound_media m
             JOIN inbound_media_groups g ON g.media_id = m.id
-            WHERE m.status = ? AND g.group_id = ?
-            ORDER BY m.first_seen_at ASC
+            WHERE {' AND '.join(where)}
+            ORDER BY g.first_seen_at DESC, m.id DESC, g.group_id DESC
+            LIMIT ?
             """,
-            (status, group_id),
+            (*params, max(1, int(limit)) + 1),
         )
+        return rows[:limit], len(rows) > limit
+
+    async def count_inbound_media_for_review(
+        self,
+        allowed_groups: Sequence[str],
+        *,
+        group_id: str | None = None,
+        status: str = "pending_review",
+    ) -> int:
+        groups = [str(item) for item in allowed_groups if str(item)]
+        if not groups:
+            return 0
+        where = ["g.review_status = ?"]
+        params: list[Any] = [status]
+        if group_id is not None:
+            where.append("g.group_id = ?")
+            params.append(group_id)
+        else:
+            where.append(f"g.group_id IN ({','.join('?' for _ in groups)})")
+            params.extend(groups)
+        rows = await self._query(
+            f"""
+            SELECT COUNT(*) AS count
+            FROM inbound_media m
+            JOIN inbound_media_groups g ON g.media_id = m.id
+            WHERE {' AND '.join(where)}
+            """,
+            params,
+        )
+        return int(rows[0]["count"]) if rows else 0
 
     async def get_inbound_media_groups(self, media_id: int) -> list[dict[str, Any]]:
         return await self._query(

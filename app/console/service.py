@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import math
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +17,10 @@ from app.runtime.session_manager import SessionManager
 from app.storage.db import StateStore
 
 
+class InvalidReviewCursor(ValueError):
+    pass
+
+
 class ConsoleService:
     def __init__(
         self,
@@ -22,6 +30,7 @@ class ConsoleService:
         bus: EventBus | None = None,
         sticker_dir: str | Path | None = None,
         sticker_promotion: StickerPromotionService | None = None,
+        allowed_groups: Sequence[str] = (),
     ) -> None:
         self.sessions = sessions
         self.memory = memory
@@ -29,6 +38,7 @@ class ConsoleService:
         self.bus = bus
         self.sticker_dir = Path(sticker_dir).resolve() if sticker_dir is not None else None
         self.sticker_promotion = sticker_promotion
+        self.allowed_groups = tuple(str(item) for item in allowed_groups)
 
     async def pause(self, session_id: str) -> bool:
         session = self.sessions.get(session_id)
@@ -110,9 +120,42 @@ class ConsoleService:
         self._publish("learning-updated", {"session_id": session_id, "cleared": True})
         return True
 
-    async def list_sticker_review(self, group_id: str) -> list[dict[str, object]]:
-        rows = await self.store.list_inbound_media_for_review(group_id)
-        return [_review_item(row) for row in rows]
+    async def list_sticker_review(
+        self,
+        group_id: str | None = None,
+        *,
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        if not 10 <= limit <= 50:
+            raise ValueError("limit must be between 10 and 50")
+        if group_id is not None and group_id not in self.allowed_groups:
+            raise PermissionError("group is not in safety.allowGroups")
+        decoded = _decode_review_cursor(cursor) if cursor else None
+        rows, has_more = await self.store.list_inbound_media_for_review(
+            self.allowed_groups,
+            group_id=group_id,
+            limit=limit,
+            cursor=decoded,
+        )
+        total_pending = await self.store.count_inbound_media_for_review(
+            self.allowed_groups,
+            group_id=group_id,
+        )
+        items = [_review_item(row) for row in rows]
+        next_cursor = None
+        if has_more and items:
+            last = rows[-1]
+            next_cursor = _encode_review_cursor(
+                float(last["group_first_seen_at"]),
+                int(last["id"]),
+                str(last["group_id"]),
+            )
+        return {
+            "items": items,
+            "nextCursor": next_cursor,
+            "totalPending": total_pending,
+        }
 
     async def approve_sticker(
         self,
@@ -210,12 +253,15 @@ class ConsoleService:
 
 
 def _review_item(row: dict[str, Any]) -> dict[str, object]:
+    media_id = int(row["id"])
     return {
-        "id": int(row["id"]),
-        "status": str(row["status"]),
+        "id": media_id,
+        "mediaId": media_id,
+        "groupId": str(row["group_id"]),
+        "previewUrl": f"/api/stickers/{media_id}/preview",
+        "status": str(row.get("review_status") or row["status"]),
         "mimeType": str(row["mime_type"]),
         "byteSize": int(row["byte_size"]),
-        "groupId": str(row["group_id"]),
         "seenCount": int(row["seen_count"]),
         "name": str(row.get("name") or ""),
         "description": str(row.get("description") or ""),
@@ -226,6 +272,41 @@ def _review_item(row: dict[str, Any]) -> dict[str, object]:
         "tagConfidence": row.get("tag_confidence"),
         "firstSeenAt": float(row.get("group_first_seen_at") or row.get("first_seen_at") or 0),
     }
+
+
+def _encode_review_cursor(first_seen_at: float, media_id: int, group_id: str) -> str:
+    payload = json.dumps(
+        [1, first_seen_at, media_id, group_id],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_review_cursor(value: str) -> tuple[float, int, str]:
+    try:
+        padding = "=" * (-len(value) % 4)
+        raw = base64.urlsafe_b64decode(f"{value}{padding}")
+        payload = json.loads(raw.decode("utf-8"))
+        if (
+            not isinstance(payload, list)
+            or len(payload) != 4
+            or payload[0] != 1
+            or not isinstance(payload[1], (int, float))
+            or isinstance(payload[1], bool)
+            or not isinstance(payload[2], int)
+            or isinstance(payload[2], bool)
+            or not isinstance(payload[3], str)
+        ):
+            raise ValueError("invalid cursor payload")
+        first_seen_at = float(payload[1])
+        media_id = int(payload[2])
+        group_id = payload[3]
+        if not math.isfinite(first_seen_at) or media_id < 0 or not group_id:
+            raise ValueError("invalid cursor values")
+    except (ValueError, TypeError, UnicodeDecodeError, binascii.Error) as exc:
+        raise InvalidReviewCursor("invalid cursor") from exc
+    return first_seen_at, media_id, group_id
 
 
 def _context_item(row: dict[str, Any]) -> dict[str, object]:

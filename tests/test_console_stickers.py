@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import struct
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,11 +58,34 @@ async def _client(tmp_path: Path) -> tuple[TestClient, StateStore, int]:
         EventBus(),
         sticker_dir=library_dir,
         sticker_promotion=promotion,
+        allowed_groups=("100000", "200000"),
     )
     app = FastAPI()
     app.state.runtime = SimpleNamespace(console=service)
     app.include_router(build_console_router(ConsoleConfig(token="secret")))
     return TestClient(app), store, media_id
+
+
+async def _add_review_media(
+    store: StateStore,
+    *,
+    group_id: str,
+    first_seen_at: float,
+    marker: str,
+) -> int:
+    digest = hashlib.sha256(marker.encode("utf-8")).hexdigest()
+    media_id = await store.upsert_inbound_media(
+        sha256=digest,
+        mime_type="image/gif",
+        byte_size=1,
+        width=1,
+        height=1,
+        local_path=f"inbox/{marker}.gif",
+        status="pending_review",
+        first_seen_at=first_seen_at,
+    )
+    await store.touch_inbound_media_group(media_id, group_id, first_seen_at)
+    return media_id
 
 
 async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> None:
@@ -85,7 +109,8 @@ async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> N
         await store.close()
 
     assert review.status_code == 200
-    assert review.json()["items"][0]["id"] == media_id
+    assert review.json()["items"][0]["mediaId"] == media_id
+    assert review.json()["totalPending"] == 1
     assert preview.status_code == 200
     assert preview.content == _gif_bytes()
     assert update.status_code == 200
@@ -93,6 +118,60 @@ async def test_console_sticker_preview_metadata_and_approve(tmp_path: Path) -> N
     assert media is not None
     assert media["name"] == "无语猫"
     assert str(media["local_path"]).startswith("images/")
+
+
+async def test_console_sticker_review_aggregates_groups_and_paginates(tmp_path: Path) -> None:
+    client, store, existing_media_id = await _client(tmp_path)
+    headers = {"authorization": "Bearer secret"}
+    try:
+        for index in range(11):
+            await _add_review_media(
+                store,
+                group_id="100000" if index % 2 else "200000",
+                first_seen_at=10.0 + index,
+                marker=f"review-{index}",
+            )
+        first_page = client.get("/api/stickers/review?limit=10", headers=headers)
+        second_page = client.get(
+            f"/api/stickers/review?limit=10&cursor={first_page.json()['nextCursor']}",
+            headers=headers,
+        )
+        filtered = client.get("/api/stickers/review?groupId=100000&limit=10", headers=headers)
+    finally:
+        await store.close()
+
+    assert first_page.status_code == 200
+    assert second_page.status_code == 200
+    assert filtered.status_code == 200
+    first_items = first_page.json()["items"]
+    second_items = second_page.json()["items"]
+    assert len(first_items) == 10
+    assert first_page.json()["totalPending"] == 12
+    assert first_page.json()["nextCursor"]
+    assert len(second_items) == 2
+    assert second_page.json()["nextCursor"] is None
+    keys = {(item["mediaId"], item["groupId"]) for item in [*first_items, *second_items]}
+    assert len(keys) == 12
+    assert existing_media_id in {item["mediaId"] for item in second_items}
+    assert [item["firstSeenAt"] for item in first_items] == sorted(
+        (item["firstSeenAt"] for item in first_items),
+        reverse=True,
+    )
+    assert all(item["groupId"] == "100000" for item in filtered.json()["items"])
+    assert all(item["previewUrl"].startswith("/api/stickers/") for item in first_items)
+
+
+async def test_console_sticker_review_rejects_invalid_cursor_and_group(tmp_path: Path) -> None:
+    client, store, _ = await _client(tmp_path)
+    headers = {"authorization": "Bearer secret"}
+    try:
+        invalid_cursor = client.get("/api/stickers/review?cursor=not-a-cursor", headers=headers)
+        invalid_group = client.get("/api/stickers/review?groupId=999999", headers=headers)
+    finally:
+        await store.close()
+
+    assert invalid_cursor.status_code == 400
+    assert invalid_group.status_code == 403
 
 
 async def test_console_sticker_reject_updates_local_path(tmp_path: Path) -> None:

@@ -143,6 +143,7 @@ def build_runtime(config: AppConfig) -> AppRuntime:
         bus,
         sticker_dir=config.sticker_dir,
         sticker_promotion=promotion,
+        allowed_groups=config.safety.allow_groups,
     )
     inbound_ingest = InboundIngest(
         config.sticker_dir,

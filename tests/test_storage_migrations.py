@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.storage.db import StateStore
+from app.storage.db import StateStore, _apply_sticker_ingest_group_review_schema
 from app.storage.migrations import Migration, backup_database, run_migrations, verify_database
 from scripts.restore_db import restore_database
 
@@ -20,7 +20,7 @@ async def test_new_database_records_initial_migration(tmp_path: Path) -> None:
     finally:
         await store.close()
 
-    assert [row[0] for row in rows] == [1, 2, 3]
+    assert [row[0] for row in rows] == [1, 2, 3, 4]
     assert all(isinstance(row[1], str) and row[1] for row in rows)
 
 
@@ -62,9 +62,113 @@ async def test_legacy_database_migrates_with_backup_and_preserves_data(tmp_path:
 
     assert {"prompt_tokens", "completion_tokens", "total_tokens"} <= columns
     assert row == (0, 0, 0)
-    assert versions == [(1,), (2,), (3,)]
+    assert versions == [(1,), (2,), (3,), (4,)]
     assert "inbound_media" in tables
     assert list((tmp_path / "backups").glob("legacy-*.db"))
+
+
+def test_group_review_migration_backfills_existing_media_status(tmp_path: Path) -> None:
+    database = tmp_path / "group-review.db"
+    conn = sqlite3.connect(database)
+    conn.execute(
+        """
+        CREATE TABLE inbound_media (
+            id INTEGER PRIMARY KEY,
+            status TEXT NOT NULL,
+            reviewed_at REAL,
+            reviewed_by TEXT,
+            reject_reason TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE inbound_media_groups (
+            media_id INTEGER NOT NULL,
+            group_id TEXT NOT NULL,
+            first_seen_at REAL NOT NULL,
+            last_seen_at REAL NOT NULL,
+            seen_count INTEGER NOT NULL DEFAULT 1,
+            PRIMARY KEY (media_id, group_id)
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO inbound_media (id, status, reviewed_at, reviewed_by, reject_reason) VALUES (?, ?, ?, ?, ?)",
+        (1, "approved", 10.0, "console", None),
+    )
+    conn.execute(
+        "INSERT INTO inbound_media (id, status, reviewed_at, reviewed_by, reject_reason) VALUES (?, ?, ?, ?, ?)",
+        (2, "rejected", 20.0, "console", "bad"),
+    )
+    conn.execute(
+        "INSERT INTO inbound_media_groups (media_id, group_id, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+        (1, "100000", 1.0, 1.0),
+    )
+    conn.execute(
+        "INSERT INTO inbound_media_groups (media_id, group_id, first_seen_at, last_seen_at) VALUES (?, ?, ?, ?)",
+        (2, "200000", 2.0, 2.0),
+    )
+    conn.commit()
+    conn.close()
+
+    run_migrations(
+        database,
+        [
+            Migration(
+                4,
+                "sticker_ingest_group_review",
+                _apply_sticker_ingest_group_review_schema,
+            )
+        ],
+    )
+
+    conn = sqlite3.connect(database)
+    rows = conn.execute(
+        "SELECT group_id, review_status, reviewed_at, reviewed_by, reject_reason "
+        "FROM inbound_media_groups ORDER BY group_id"
+    ).fetchall()
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(inbound_media_groups)")}
+    indexes = {row[1] for row in conn.execute("PRAGMA index_list(inbound_media_groups)")}
+    conn.close()
+
+    assert {"review_status", "reviewed_at", "reviewed_by", "reject_reason"} <= columns
+    assert "idx_media_groups_review" in indexes
+    assert rows == [
+        ("100000", "approved", 10.0, "console", None),
+        ("200000", "rejected", 20.0, "console", "bad"),
+    ]
+
+
+async def test_group_review_state_is_isolated_by_group(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "isolation.db")
+    await store.init()
+    try:
+        media_id = await store.upsert_inbound_media(
+            sha256="a" * 64,
+            mime_type="image/gif",
+            byte_size=1,
+            width=1,
+            height=1,
+            local_path="inbox/a.gif",
+            status="pending_review",
+            first_seen_at=1.0,
+        )
+        await store.touch_inbound_media_group(media_id, "100000", 1.0)
+        await store.touch_inbound_media_group(media_id, "200000", 1.0)
+        assert await store.update_inbound_media_group_review(
+            media_id,
+            "100000",
+            "approved",
+            reviewed_by="console",
+        )
+        groups = await store.get_inbound_media_groups(media_id)
+    finally:
+        await store.close()
+
+    by_group = {str(row["group_id"]): row for row in groups}
+    assert by_group["100000"]["review_status"] == "approved"
+    assert by_group["200000"]["review_status"] == "pending_review"
 
 
 def test_migration_failure_rolls_back_and_keeps_version_zero(tmp_path: Path) -> None:

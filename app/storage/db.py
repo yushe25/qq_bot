@@ -212,6 +212,39 @@ ALTER TABLE inbound_media ADD COLUMN scenes_json TEXT NOT NULL DEFAULT '[]';
 ALTER TABLE inbound_media ADD COLUMN avoid_scenes_json TEXT NOT NULL DEFAULT '[]';
 """
 
+_STICKER_INGEST_GROUP_REVIEW_SCHEMA = """
+ALTER TABLE inbound_media_groups ADD COLUMN review_status TEXT NOT NULL DEFAULT 'pending_review';
+ALTER TABLE inbound_media_groups ADD COLUMN reviewed_at REAL;
+ALTER TABLE inbound_media_groups ADD COLUMN reviewed_by TEXT;
+ALTER TABLE inbound_media_groups ADD COLUMN reject_reason TEXT;
+CREATE INDEX IF NOT EXISTS idx_media_groups_review
+    ON inbound_media_groups(review_status, group_id, media_id);
+UPDATE inbound_media_groups
+SET review_status = COALESCE((
+        SELECT CASE
+            WHEN m.status IN ('approved', 'rejected') THEN m.status
+            ELSE 'pending_review'
+        END
+        FROM inbound_media m
+        WHERE m.id = inbound_media_groups.media_id
+    ), 'pending_review'),
+    reviewed_at = (
+        SELECT m.reviewed_at
+        FROM inbound_media m
+        WHERE m.id = inbound_media_groups.media_id
+    ),
+    reviewed_by = (
+        SELECT m.reviewed_by
+        FROM inbound_media m
+        WHERE m.id = inbound_media_groups.media_id
+    ),
+    reject_reason = (
+        SELECT m.reject_reason
+        FROM inbound_media m
+        WHERE m.id = inbound_media_groups.media_id
+    );
+"""
+
 _UPSERT_SESSION_SQL = """
 INSERT INTO sessions (
     id, scene_type, scene_id, state, persona_id,
@@ -816,6 +849,36 @@ class StateStore:
             (media_id,),
         )
 
+    async def update_inbound_media_group_review(
+        self,
+        media_id: int,
+        group_id: str,
+        status: str,
+        *,
+        reviewed_by: str | None = None,
+        reject_reason: str | None = None,
+    ) -> bool:
+        if status not in {"pending_review", "approved", "rejected"}:
+            raise ValueError("invalid inbound media review status")
+        rows = await self._query(
+            "SELECT 1 FROM inbound_media_groups WHERE media_id = ? AND group_id = ?",
+            (media_id, group_id),
+        )
+        if not rows:
+            return False
+        await self._execute(
+            """
+            UPDATE inbound_media_groups
+            SET review_status = ?,
+                reviewed_at = ?,
+                reviewed_by = ?,
+                reject_reason = ?
+            WHERE media_id = ? AND group_id = ?
+            """,
+            (status, now_ms(), reviewed_by, reject_reason, media_id, group_id),
+        )
+        return True
+
     async def list_sticker_context_for_media(self, media_id: int) -> list[dict[str, Any]]:
         return await self._query(
             "SELECT * FROM sticker_context_observations WHERE media_id = ? ORDER BY observed_at DESC LIMIT 50",
@@ -1346,6 +1409,10 @@ def _apply_sticker_ingest_metadata_schema(conn: sqlite3.Connection) -> None:
     _execute_schema_statements(conn, _STICKER_INGEST_METADATA_SCHEMA)
 
 
+def _apply_sticker_ingest_group_review_schema(conn: sqlite3.Connection) -> None:
+    _execute_schema_statements(conn, _STICKER_INGEST_GROUP_REVIEW_SCHEMA)
+
+
 def _execute_schema_statements(conn: sqlite3.Connection, schema: str) -> None:
     for statement in schema.split(";"):
         if statement.strip():
@@ -1356,6 +1423,11 @@ _MIGRATIONS = (
     Migration(version=1, name="initial_schema", apply=_apply_initial_schema),
     Migration(version=2, name="sticker_ingest", apply=_apply_sticker_ingest_schema),
     Migration(version=3, name="sticker_ingest_metadata", apply=_apply_sticker_ingest_metadata_schema),
+    Migration(
+        version=4,
+        name="sticker_ingest_group_review",
+        apply=_apply_sticker_ingest_group_review_schema,
+    ),
 )
 
 

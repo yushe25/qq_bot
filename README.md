@@ -286,6 +286,8 @@ python scripts/onebot_check.py
 | `learning.confidenceThreshold` | 接受笔记的最低置信度 | `0.7` |
 | `learning.maxNotesPerSession` | 每会话保留的学习笔记上限 | `20` |
 | `learning.notesTtlDays` | 学习笔记有效期（天） | `7` |
+| `learning.maxOutputTokens` | 单次学习任务最大输出 Token；推理模型需要为最终 JSON 预留空间 | `1024` |
+| `learning.reasoningEffort` | 学习请求的推理强度；结构化提取默认 `none`，不支持时设为 `null` | `none` |
 | `learning.excludeMembers` | 不参与观察学习的 QQ 号 | `[]` |
 | `safety.allowGroups` | 允许的群号列表 | `[]` |
 | `safety.maxGroupMembers` | 群成员数上限；超限时只读不发言 | `20` |

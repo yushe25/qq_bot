@@ -55,6 +55,7 @@ async def test_provider_sends_extra_headers(monkeypatch: pytest.MonkeyPatch) -> 
             system="system",
             messages=[{"role": "user", "content": "hi"}],
             tools=[],
+            reasoning_effort="none",
         )
     )
 
@@ -63,6 +64,7 @@ async def test_provider_sends_extra_headers(monkeypatch: pytest.MonkeyPatch) -> 
     assert captured["headers"]["x-opencode-session"] == "session-123"
     assert "authorization" not in captured["headers"]
     assert captured["body"]["messages"][0]["role"] == "system"
+    assert captured["body"]["reasoning_effort"] == "none"
 
 
 async def test_provider_parses_token_usage(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,11 +72,17 @@ async def test_provider_parses_token_usage(monkeypatch: pytest.MonkeyPatch) -> N
         return httpx.Response(
             200,
             json={
-                "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
                 "usage": {
                     "prompt_tokens": 123,
                     "completion_tokens": 7,
                     "total_tokens": 130,
+                    "completion_tokens_details": {"reasoning_tokens": 3},
                 },
             },
         )
@@ -93,6 +101,8 @@ async def test_provider_parses_token_usage(monkeypatch: pytest.MonkeyPatch) -> N
     assert result.prompt_tokens == 123
     assert result.completion_tokens == 7
     assert result.total_tokens == 130
+    assert result.finish_reason == "stop"
+    assert result.reasoning_tokens == 3
 
 
 async def test_mock_provider_reports_approximate_token_usage() -> None:

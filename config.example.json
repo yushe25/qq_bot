@@ -79,6 +79,8 @@
     "maxNotesPerSession": 20,
     "notesTtlDays": 7,
     "maxObservationsPerSession": 250,
+    "maxOutputTokens": 1024,
+    "reasoningEffort": "none",
     "excludeMembers": []
   },
   "safety": {

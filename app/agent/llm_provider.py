@@ -22,6 +22,7 @@ class ChatRequest(BaseModel):
     tools: list[dict[str, Any]]
     temperature: float | None = None
     max_tokens: int | None = None
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
 
 
 class ChatResult(BaseModel):
@@ -31,6 +32,8 @@ class ChatResult(BaseModel):
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    finish_reason: str | None = None
+    reasoning_tokens: int = 0
 
 
 class LLMProvider(Protocol):

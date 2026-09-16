@@ -197,6 +197,8 @@ class LearningConfig(BaseModel):
     max_notes_per_session: int = 20
     notes_ttl_days: int = 7
     max_observations_per_session: int = 250
+    max_output_tokens: int = Field(default=1024, ge=256, le=4096)
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "none"
     exclude_members: list[str] = Field(default_factory=list)
 
 

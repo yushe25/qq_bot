@@ -154,7 +154,8 @@ class LearningRunner:
                     messages=[{"role": "user", "content": prompt}],
                     tools=[],
                     temperature=0.2,
-                    max_tokens=256,
+                    max_tokens=self.config.learning.max_output_tokens,
+                    reasoning_effort=self.config.learning.reasoning_effort,
                 )
             )
             try:
@@ -230,7 +231,10 @@ def _result(ok: bool, accepted: int = 0, reason: str = "") -> dict[str, Any]:
 def _parse_notes(result: ChatResult) -> list[dict[str, Any]]:
     content = (result.content or "").strip()
     if result.kind != "text" or not content:
-        raise ValueError("empty learning response")
+        detail = f"finish_reason={result.finish_reason or 'unknown'}"
+        if result.reasoning_tokens:
+            detail += f", reasoning_tokens={result.reasoning_tokens}"
+        raise ValueError(f"empty learning response ({detail})")
     if content.startswith("```"):
         content = content.strip("`")
         content = content.removeprefix("json")

@@ -33,7 +33,9 @@
 - `tokenBudget.toolResultChars` 默认 1600。
 - `qq_get_group_history.limit` 默认 10，最大仍为 50。
 
-学习任务不占用普通唤醒预算，但学习请求的 `max_tokens` 不超过 256。
+学习任务不占用普通唤醒预算。学习请求默认使用 `learning.maxOutputTokens=1024`，
+允许范围 256 到 4096；默认 `learning.reasoningEffort=none`，避免推理模型把全部
+输出预算用于推理链而未产生最终 JSON。模型不支持该参数时可将配置设为 `null`。
 
 ## 数据契约
 

@@ -185,6 +185,20 @@ async def test_learning_retries_invalid_json_once_then_writes(stack: TestStack) 
     assert stack.learning.provider.last_request is not None
 
 
+async def test_learning_uses_configured_output_budget(stack: TestStack) -> None:
+    session_id = "group:100000"
+    stack.config.learning.max_output_tokens = 2048
+    stack.learning.provider = _NotesProvider(notes=[_note()])
+    await _seed_observations(stack, session_id, count=1)
+
+    result = await stack.learning.run_once(stack.sessions.ensure_session("group", "100000"))
+
+    assert result["accepted"] == 1
+    assert stack.learning.provider.last_request is not None
+    assert stack.learning.provider.last_request.max_tokens == 2048
+    assert stack.learning.provider.last_request.reasoning_effort == "none"
+
+
 class _AlwaysInvalidProvider(_NotesProvider):
     async def complete(self, req: ChatRequest) -> ChatResult:
         return ChatResult(kind="text", content="还是不是 JSON")

@@ -33,6 +33,8 @@ class OpenAICompatibleProvider:
         }
         if req.tools:
             payload["tools"] = req.tools
+        if req.reasoning_effort is not None:
+            payload["reasoning_effort"] = req.reasoning_effort
         headers = {"content-type": "application/json"}
         if self.config.api_key:
             headers["authorization"] = f"Bearer {self.config.api_key}"
@@ -78,7 +80,9 @@ class OpenAICompatibleProvider:
         message = choice.get("message")
         if not isinstance(message, dict):
             raise TypeError("completion message is not an object")
-        prompt_tokens, completion_tokens, total_tokens = _parse_usage(body)
+        prompt_tokens, completion_tokens, total_tokens, reasoning_tokens = _parse_usage(body)
+        finish_reason_value = choice.get("finish_reason")
+        finish_reason = str(finish_reason_value) if finish_reason_value is not None else None
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
             calls: list[ToolCall] = []
@@ -108,6 +112,8 @@ class OpenAICompatibleProvider:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                finish_reason=finish_reason,
+                reasoning_tokens=reasoning_tokens,
             )
         content = message.get("content")
         if isinstance(content, list):
@@ -118,19 +124,27 @@ class OpenAICompatibleProvider:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            finish_reason=finish_reason,
+            reasoning_tokens=reasoning_tokens,
         )
 
 
-def _parse_usage(body: dict[str, object]) -> tuple[int, int, int]:
+def _parse_usage(body: dict[str, object]) -> tuple[int, int, int, int]:
     usage = body.get("usage")
     if not isinstance(usage, dict):
-        return 0, 0, 0
+        return 0, 0, 0, 0
     prompt_tokens = _as_non_negative_int(usage.get("prompt_tokens"))
     completion_tokens = _as_non_negative_int(usage.get("completion_tokens"))
     total_tokens = _as_non_negative_int(usage.get("total_tokens"))
+    details = usage.get("completion_tokens_details")
+    reasoning_tokens = (
+        _as_non_negative_int(details.get("reasoning_tokens"))
+        if isinstance(details, dict)
+        else 0
+    )
     if total_tokens == 0:
         total_tokens = prompt_tokens + completion_tokens
-    return prompt_tokens, completion_tokens, total_tokens
+    return prompt_tokens, completion_tokens, total_tokens, reasoning_tokens
 
 
 def _as_non_negative_int(value: object) -> int:

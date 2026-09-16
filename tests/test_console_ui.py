@@ -26,3 +26,7 @@ def test_console_uses_wake_logs_and_structured_event_feed() -> None:
     assert "async function loadNextStickerReviewPage()" in page
     assert "button.textContent = '加载更多'" in page
     assert "tail.textContent = '已全部加载'" in page
+    assert "async function fetchAuthorizedBlob" in page
+    assert "URL.createObjectURL(blob)" in page
+    assert "URL.revokeObjectURL(objectUrl)" in page
+    assert "image.src = item.previewUrl" not in page

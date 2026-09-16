@@ -143,6 +143,16 @@
     background: #eef1ec;
     border-radius: 4px;
   }
+  .sticker-preview-placeholder {
+    width: 150px;
+    height: 150px;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    background: #eef1ec;
+    border-radius: 4px;
+    font-size: 12px;
+  }
   .sticker-copy { display: grid; gap: 6px; min-width: 0; }
   .sticker-title { font-weight: 700; overflow-wrap: anywhere; }
   .sticker-meta, .sticker-semantics, .sticker-status {
@@ -247,6 +257,7 @@ let stickerReviewCursor = null;
 let stickerReviewLoading = false;
 let stickerReviewExhausted = false;
 let stickerObserver = null;
+const stickerPreviewObjectUrls = new Set();
 
 function setOnline(on) {
   $('#state-dot').classList.toggle('on', on);
@@ -303,8 +314,7 @@ function askToken() {
 }
 
 async function api(path, options = {}, retry = true) {
-  const headers = { 'content-type': 'application/json' };
-  if (token) headers.authorization = `Bearer ${token}`;
+  const headers = { 'content-type': 'application/json', ...authorizationHeader() };
   options.headers = { ...headers, ...(options.headers || {}) };
   const res = await fetch(path, {
     ...options,
@@ -314,6 +324,19 @@ async function api(path, options = {}, retry = true) {
   }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
+}
+
+function authorizationHeader() {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+async function fetchAuthorizedBlob(path, retry = true) {
+  const res = await fetch(path, { headers: authorizationHeader() });
+  if (res.status === 401 && retry && askToken()) {
+    return fetchAuthorizedBlob(path, false);
+  }
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.blob();
 }
 
 async function refresh() {
@@ -390,6 +413,7 @@ async function reloadStickerReviewAfterMutation() {
 function renderStickerReview(items) {
   const root = $('#sticker-review');
   stickerLoadedCount = items.length || 10;
+  revokeStickerPreviewUrls(root);
   root.replaceChildren();
   if (!items.length) {
     const empty = document.createElement('div');
@@ -414,8 +438,8 @@ function createStickerReviewCard(item) {
   row.dataset.mediaId = String(item.mediaId);
   row.dataset.groupId = item.groupId;
   const image = document.createElement('img');
-  image.src = item.previewUrl || `/api/stickers/${item.mediaId}/preview`;
   image.alt = '';
+  loadStickerPreview(image, item.previewUrl || `/api/stickers/${item.mediaId}/preview`);
   const detail = document.createElement('div');
   detail.className = 'sticker-copy';
   const title = document.createElement('b');
@@ -501,6 +525,47 @@ function createStickerReviewCard(item) {
   detail.append(title, meta, semantics, edit, actions);
   row.append(image, detail);
   return row;
+}
+
+async function loadStickerPreview(image, previewUrl) {
+  try {
+    const blob = await fetchAuthorizedBlob(previewUrl);
+    const objectUrl = URL.createObjectURL(blob);
+    if (!image.isConnected) {
+      URL.revokeObjectURL(objectUrl);
+      return;
+    }
+    stickerPreviewObjectUrls.add(objectUrl);
+    image.dataset.objectUrl = objectUrl;
+    image.src = objectUrl;
+    image.addEventListener('error', () => {
+      releaseStickerPreviewUrl(image);
+      image.replaceWith(createStickerPreviewPlaceholder());
+    }, { once: true });
+  } catch (err) {
+    if (image.isConnected) image.replaceWith(createStickerPreviewPlaceholder());
+  }
+}
+
+function createStickerPreviewPlaceholder() {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'sticker-preview-placeholder';
+  placeholder.textContent = '预览不可用';
+  return placeholder;
+}
+
+function releaseStickerPreviewUrl(image) {
+  const objectUrl = image.dataset.objectUrl;
+  if (!objectUrl) return;
+  URL.revokeObjectURL(objectUrl);
+  stickerPreviewObjectUrls.delete(objectUrl);
+  delete image.dataset.objectUrl;
+}
+
+function revokeStickerPreviewUrls(root) {
+  for (const image of root.querySelectorAll('img[data-object-url]')) {
+    releaseStickerPreviewUrl(image);
+  }
 }
 
 function createStickerReviewTail() {
@@ -887,6 +952,10 @@ $('#token-button').addEventListener('click', () => {
 refresh();
 connect();
 setInterval(loadHealth, 10000);
+window.addEventListener('beforeunload', () => {
+  for (const objectUrl of stickerPreviewObjectUrls) URL.revokeObjectURL(objectUrl);
+  stickerPreviewObjectUrls.clear();
+});
 </script>
 </body>
 </html>

@@ -109,6 +109,29 @@ class SafetyPipeline:
                 await self._blocked("send_message", ctx.session.id, reason, raw_text, "send_message")
                 results.append({"ok": False, "action": str(raw_item.get("type", "")), "reason": reason})
                 continue
+            remaining_sends = max(0, self.config.max_sends_per_wake - sent_count)
+            if remaining_sends <= 0:
+                results.append(
+                    {
+                        "ok": False,
+                        "action": str(raw_item.get("type", "")),
+                        "reason": f"单次唤醒最多发送 {self.config.max_sends_per_wake} 条",
+                    }
+                )
+                continue
+            all_segments = normalize_reply_segments(raw_text)
+            segments = normalize_reply_segments(raw_text, max_segments=remaining_sends)
+            if len(all_segments) > len(segments):
+                await self.audit.record(
+                    action="reply_segments_merged",
+                    detail=(
+                        f"session={ctx.session.id} original={len(all_segments)} "
+                        f"kept={len(segments)} limit={self.config.max_sends_per_wake}"
+                    ),
+                    result="debug",
+                    session_id=ctx.session.id,
+                    actor_type="agent",
+                )
             action_type = str(raw_item.get("type", ""))
             mention_ids: tuple[str, ...] = ()
             if action_type == "send_group":
@@ -137,7 +160,7 @@ class SafetyPipeline:
                     if not mention_ok:
                         results.append({"ok": False, "action": action_type, "reason": mention_reason})
                         continue
-            for segment_index, text in enumerate(normalize_reply_segments(raw_text)):
+            for segment_index, text in enumerate(segments):
                 item = dict(raw_item)
                 item["message"] = text
                 action_type = str(item.get("type", ""))

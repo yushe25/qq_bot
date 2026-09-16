@@ -347,6 +347,32 @@ async def test_safety_pipeline_splits_comma_messages(stack: TestStack) -> None:
     assert [item["text"] for item in stack.gateway.sent] == ["在吗", "帮我看看"]
 
 
+async def test_safety_pipeline_merges_segment_tail_at_wake_limit(stack: TestStack) -> None:
+    stack.config.safety.max_sends_per_wake = 3
+    session = Session(id="group:100000", scene_type="group", scene_id="100000")
+    context = ToolContext(
+        session=session,
+        gateway=stack.gateway,
+        config=stack.config,
+        memory=stack.memory,
+        whitelist=stack.whitelist,
+    )
+    context.outbox.append(
+        {
+            "type": "send_group",
+            "group_id": "100000",
+            "message": "第一段，第二段，第三段，第四段",
+        }
+    )
+
+    results = await stack.safety.execute_outbox(context, stack.gateway)
+
+    assert [item.get("ok") for item in results] == [True, True, True]
+    assert [item["text"] for item in stack.gateway.sent] == ["第一段", "第二段", "第三段第四段"]
+    audits = await stack.store.list_audit(limit=20)
+    assert any(item["action"] == "reply_segments_merged" for item in audits)
+
+
 async def test_safety_pipeline_preserves_literal_at(stack: TestStack) -> None:
     session = Session(id="group:100000", scene_type="group", scene_id="100000")
     context = ToolContext(

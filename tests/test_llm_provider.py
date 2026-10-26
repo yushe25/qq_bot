@@ -74,7 +74,11 @@ async def test_provider_parses_token_usage(monkeypatch: pytest.MonkeyPatch) -> N
             json={
                 "choices": [
                     {
-                        "message": {"role": "assistant", "content": "ok"},
+                        "message": {
+                            "role": "assistant",
+                            "content": "ok",
+                            "reasoning_content": "thinking",
+                        },
                         "finish_reason": "stop",
                     }
                 ],
@@ -103,6 +107,7 @@ async def test_provider_parses_token_usage(monkeypatch: pytest.MonkeyPatch) -> N
     assert result.total_tokens == 130
     assert result.finish_reason == "stop"
     assert result.reasoning_tokens == 3
+    assert result.reasoning_content == "thinking"
 
 
 async def test_mock_provider_reports_approximate_token_usage() -> None:

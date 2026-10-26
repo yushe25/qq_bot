@@ -139,7 +139,10 @@ class MockOneBot:
                 "post_type": "notice",
                 "notice_type": "notify",
                 "sub_type": "poke",
-                "time": int(time.time()),
+                # 拍一拍的事件指纹包含 time（event_normalizer 的 poke:scene:user:time）。
+                # 用 time.time() 会让重启后的重放变成"新事件"，再唤醒一次并多出一次发送，
+                # S6-R07（重放不得增加 daily_send / sticker_usage）因此失败。固定时间保证重放可去重。
+                "time": 1_700_000_000,
                 "self_id": int(self.bot_id),
                 "message_id": self._stage6_seq,
                 "group_id": int(self.group_id),
@@ -422,7 +425,19 @@ async def run_servers(
 ) -> None:
     app = build_http_app(mock)
     http_server = uvicorn.Server(uvicorn.Config(app, host=host, port=http_port, log_level="info"))
-    ws_server = await websockets.serve(mock.ws_handler, host, ws_port)
+    handler_tasks: set[asyncio.Task[None]] = set()
+
+    async def tracked_handler(websocket: Any) -> None:
+        current = asyncio.current_task()
+        if current is not None:
+            handler_tasks.add(current)
+        try:
+            await mock.ws_handler(websocket)
+        finally:
+            if current is not None:
+                handler_tasks.discard(current)
+
+    ws_server = await websockets.serve(tracked_handler, host, ws_port)
     logger.info("mock OneBot HTTP=%s:%s WS=%s:%s group=%s bot=%s", host, http_port, host, ws_port, mock.group_id, mock.bot_id)
     stop_path = Path(stop_file).resolve() if stop_file else None
     stop_task: asyncio.Task[None] | None = None
@@ -430,6 +445,9 @@ async def run_servers(
         async def wait_for_stop() -> None:
             while not stop_path.exists():
                 await asyncio.sleep(0.25)
+            # 先落盘证据：事件推送协程可能还在场景间隔的 sleep 中，等它自然结束
+            # 会让 driver 等超时后强杀进程，报告文件直接丢失（S6-M01/M02/M03/R07 变假失败）。
+            mock.write_report()
             http_server.should_exit = True
 
         stop_task = asyncio.create_task(wait_for_stop())
@@ -443,6 +461,8 @@ async def run_servers(
             except asyncio.CancelledError:
                 pass
         ws_server.close()
+        for task in list(handler_tasks):
+            task.cancel()
         await ws_server.wait_closed()
         mock.write_report()
 

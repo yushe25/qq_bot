@@ -17,7 +17,7 @@
 ### 问题
 
 默认执行 `.venv\Scripts\python.exe -m pytest -q` 时，pytest 尝试使用
-`C:\Users\dingg\AppData\Local\Temp\pytest-of-dingg`，因 Windows ACL 返回
+`C:\Users\<user>\AppData\Local\Temp\pytest-of-<user>`，因 Windows ACL 返回
 `WinError 5`，产生 81 个 fixture setup error。工作区现有 `.pytest-tmp/` 下还混有
 其他任务产物，不能直接将其作为 basetemp，否则 pytest 启动清理会误删数据。
 

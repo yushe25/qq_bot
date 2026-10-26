@@ -87,12 +87,12 @@ def test_empty_sticker_catalog_does_not_add_selection_rules() -> None:
     assert "表情选择规则：" not in prompt
 
 
-def test_default_persona_identifies_as_lijiang_native() -> None:
+def test_default_persona_identity_is_generic() -> None:
     persona_path = Path(__file__).resolve().parents[1] / "personas" / "default.yaml"
 
     persona = load_persona(persona_path)
 
-    assert "浙江丽水人" in persona
+    assert "普通年轻人" in persona
     assert "不刻意使用方言" in persona
 
 

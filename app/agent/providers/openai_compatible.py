@@ -83,6 +83,12 @@ class OpenAICompatibleProvider:
         prompt_tokens, completion_tokens, total_tokens, reasoning_tokens = _parse_usage(body)
         finish_reason_value = choice.get("finish_reason")
         finish_reason = str(finish_reason_value) if finish_reason_value is not None else None
+        reasoning_content_value = message.get("reasoning_content")
+        reasoning_content = (
+            str(reasoning_content_value)
+            if reasoning_content_value is not None
+            else None
+        )
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
             calls: list[ToolCall] = []
@@ -108,6 +114,7 @@ class OpenAICompatibleProvider:
                 )
             return ChatResult(
                 kind="tool_calls",
+                reasoning_content=reasoning_content,
                 calls=calls,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
@@ -121,6 +128,7 @@ class OpenAICompatibleProvider:
         return ChatResult(
             kind="text",
             content=str(content or ""),
+            reasoning_content=reasoning_content,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
@@ -167,6 +175,8 @@ def _to_openai(message: ChatMessage | dict[str, Any]) -> dict[str, object]:
         item: dict[str, object] = {"role": message.role}
         if message.content is not None:
             item["content"] = message.content
+        if message.reasoning_content is not None:
+            item["reasoning_content"] = message.reasoning_content
         if message.tool_calls:
             item["tool_calls"] = message.tool_calls
         if message.tool_call_id:

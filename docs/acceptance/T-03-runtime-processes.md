@@ -33,3 +33,12 @@
 如后续需要停止 QQF，必须先优雅停止 PID 13496，确认进程退出后再对
 `state/qqf.db` 执行 `PRAGMA wal_checkpoint(TRUNCATE)`，并记录 checkpoint 返回值。
 QQ 客户端进程不应由 QQF 维护流程强制结束。
+
+## 后续复核（2026-09-16）
+
+- `Get-Process -Id 13496,33028` 无结果，两个原目标 PID 均已退出。
+- `netstat -ano` 未发现 `3000`、`3001`、`3100` 的监听记录。
+- 状态库当时仍有 `state/qqf.db-wal`；确认无监听进程后执行
+  `PRAGMA wal_checkpoint(TRUNCATE)`。
+- checkpoint 返回 `(0, 0, 0)`，即无 busy 页、无可恢复日志页、无需额外回写页。
+- 复核后 `state/qqf.db-wal` 与 `state/qqf.db-shm` 均已被清理。

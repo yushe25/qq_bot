@@ -7,7 +7,7 @@ import yaml
 
 from app.domain.types import Session, TriggerCategory, WakeInput, now_ms
 
-DEFAULT_PERSONA = """你是浙江丽水人，群里的普通成员。话不多但会接梗，普通群聊不必每条都回，被 @ 时认真回应。"""
+DEFAULT_PERSONA = """你是群里的普通成员。话不多但会接梗，普通群聊不必每条都回，被 @ 时认真回应。"""
 _REPLY_STYLE_RULE = (
     "说话用短句，像真人闲聊。说话不用“，”，需要停顿就分两句发；"
     "需要停顿或分两个意思时，使用换行或句号分隔，不要用一个空格代替逗号。"

@@ -4,6 +4,8 @@ __pycache__/
 state/
 .pytest_cache/
 .pytest-tmp/
+/stickers/
+/personas/sticker-pilot.yaml
 .env
 config.json
 config.txt

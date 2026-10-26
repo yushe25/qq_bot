@@ -25,7 +25,7 @@
 
 以下两个路径已成功清理，当前均不存在：
 
-- `C:\Users\dingg\AppData\Local\Temp\pytest-of-dingg`
+- `C:\Users\<user>\AppData\Local\Temp\pytest-of-<user>`
 - `<项目根>\.pytest_cache`
 
 清理没有修改 `pyproject.toml`，没有删除 `.pytest-tmp/` 下其他目录，也没有引入清理脚本
@@ -34,8 +34,8 @@
 ### 验证
 
 ```powershell
-Test-Path -LiteralPath "C:\Users\dingg\AppData\Local\Temp\pytest-of-dingg"
-Test-Path -LiteralPath "C:\Users\dingg\Downloads\qq-bridge-main\new-bridge\.pytest_cache"
+Test-Path -LiteralPath "C:\Users\<user>\AppData\Local\Temp\pytest-of-<user>"
+Test-Path -LiteralPath "C:\Users\<user>\Downloads\qq-bridge-main\new-bridge\.pytest_cache"
 ```
 
 结果：

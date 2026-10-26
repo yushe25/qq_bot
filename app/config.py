@@ -147,7 +147,7 @@ class SchedulerConfig(BaseModel):
     normal_quiet_window_ms: int = Field(default=4000, ge=0)
     normal_max_wait_ms: int = Field(default=10_000, ge=0)
     initial_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "none"
-    tool_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "minimal"
+    tool_reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = "none"
     wake_probability: float = 0.04
     mention_dive_probability: float = Field(default=0.05, ge=0.0, le=1.0)
     names: list[str] = Field(default_factory=list)

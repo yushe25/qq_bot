@@ -188,8 +188,8 @@ python scripts/onebot_check.py
   和字面 `@` 保守不拆。多段之间默认随机延迟 400 到 1200 毫秒，可通过安全配置关闭。
 - 发言后进入 90 秒冷却；无行动时自动潜水，连续无行动会强制缩短下一次潜水间隔，避免“永眠”。
 - `@`、私聊和强制唤醒可绕过普通冷却，但仍受发送频率、每日上限和成员数护栏约束。
-- 普通聊天首次模型调用默认使用 `reasoning_effort=none`，工具调用后的综合默认使用
-  `minimal`；单次聊天请求默认超时 20 秒，同一 Provider 不重复请求。
+- 普通聊天首次调用和工具调用后的综合默认使用 `reasoning_effort=none`；
+  单次聊天请求默认超时 20 秒，同一 Provider 不重复请求。
 - 全局和按会话都有发送/唤醒频率上限，防止刷屏。
 - 作息窗口来自 persona 的 `schedule`：活跃时段正常响应，安静时段普通消息排队到下一活跃窗口，owner/@/拍一拍走慢响应延迟。
 - 每会话每日发送达到 `safety.maxSendsPerDay` 后熔断，只写审计；owner 可在控制台手动恢复。
@@ -285,7 +285,7 @@ python scripts/onebot_check.py
 | `scheduler.normalQuietWindowMs` | 普通消息的发送人静默窗口（毫秒） | `4000` |
 | `scheduler.normalMaxWaitMs` | 普通批次从首条起的最大等待（毫秒） | `10000` |
 | `scheduler.initialReasoningEffort` | 普通聊天首次模型调用推理强度 | `none` |
-| `scheduler.toolReasoningEffort` | 工具调用后的模型综合推理强度 | `minimal` |
+| `scheduler.toolReasoningEffort` | 工具调用后的模型综合推理强度 | `none` |
 | `scheduler.wakeProbability` | 普通消息唤醒概率 | `0.04` |
 | `scheduler.mentionDiveProbability` | 被 @ 或私聊时未回复直接潜水的概率 | `0.05` |
 | `scheduler.names` | 能被昵称唤起的名字列表 | `[]` |

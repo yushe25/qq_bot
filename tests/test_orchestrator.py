@@ -307,7 +307,7 @@ async def test_final_model_step_omits_tools_and_aggregates_usage(stack: TestStac
 
 async def test_reasoning_effort_uses_initial_then_tool_configuration(stack: TestStack) -> None:
     stack.config.scheduler.initial_reasoning_effort = "none"
-    stack.config.scheduler.tool_reasoning_effort = "minimal"
+    stack.config.scheduler.tool_reasoning_effort = "high"
     provider = _ScriptedProvider(
         [
             ChatResult(
@@ -329,7 +329,7 @@ async def test_reasoning_effort_uses_initial_then_tool_configuration(stack: Test
         ),
     )
 
-    assert [request.reasoning_effort for request in provider.requests] == ["none", "minimal"]
+    assert [request.reasoning_effort for request in provider.requests] == ["none", "high"]
 
 
 async def test_repeated_tool_results_are_compressed(stack: TestStack) -> None:
@@ -636,3 +636,53 @@ async def test_wake_injects_sticker_catalog_and_enum_without_paths(stack: TestSt
     assert "mock-01" in request.system
     assert "无语猫" in request.system
     assert "images/" not in request.system
+
+
+async def test_orchestrator_passes_reasoning_content_back_with_tool_result(
+    stack: TestStack,
+) -> None:
+    provider = _ScriptedProvider(
+        [
+            ChatResult(
+                kind="tool_calls",
+                content="",
+                reasoning_content="先确认发送方式",
+                calls=[
+                    ToolCall(
+                        name="qq_send_group_message",
+                        arguments={"groupId": "100000", "message": "收到"},
+                        id="reasoning-tool-1",
+                    )
+                ],
+            ),
+            ChatResult(kind="text", content=""),
+        ]
+    )
+    stack.orchestrator.provider = provider
+    session = stack.sessions.ensure_session("group", "100000")
+    wake = WakeInput(
+        session_id=session.id,
+        category=TriggerCategory.MENTION,
+        reason="推理内容回传测试",
+        events=(_mention_event(session.id),),
+    )
+
+    outcome = await stack.orchestrator.run_wake(session, wake)
+
+    assert outcome.sent == 1
+    assert len(provider.requests) == 2
+    assistant = next(
+        message
+        for message in provider.requests[1].messages
+        if (
+            isinstance(message, dict)
+            and message.get("role") == "assistant"
+        )
+        or getattr(message, "role", None) == "assistant"
+    )
+    reasoning_content = (
+        assistant.get("reasoning_content")
+        if isinstance(assistant, dict)
+        else assistant.reasoning_content
+    )
+    assert reasoning_content == "先确认发送方式"

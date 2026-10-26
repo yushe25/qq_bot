@@ -208,7 +208,13 @@ class Orchestrator:
             timing_data["provider_finished_at"] = now_ms()
 
             if result.kind == "tool_calls":
-                conversation.append({"role": "assistant", "content": result.content})
+                assistant_message: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": result.content,
+                }
+                if result.reasoning_content is not None:
+                    assistant_message["reasoning_content"] = result.reasoning_content
+                conversation.append(assistant_message)
                 call_ids = [
                     call.id or f"call-{step}-{index}"
                     for index, call in enumerate(result.calls)

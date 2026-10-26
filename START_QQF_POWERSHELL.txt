@@ -1,0 +1,46 @@
+QQF PowerShell 启动命令
+=======================
+
+一、进入项目目录
+
+Set-Location "C:\path\to\new-bridge"
+
+
+二、首次安装依赖
+
+uv sync --locked --extra dev
+
+
+三、离线 Mock 模式启动
+
+.\start.ps1 -Mock
+
+
+四、只检查真实配置，不启动 QQF
+
+.\start.ps1 -Config config.json -CheckOnly
+
+
+五、使用真实配置启动 QQF
+
+.\start.ps1 -Config config.json
+
+
+六、PowerShell 禁止运行脚本时，使用下面的真实模式命令
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1 -Config config.json
+
+
+七、PowerShell 禁止运行脚本时，使用下面的 Mock 模式命令
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\start.ps1 -Mock
+
+
+八、控制台地址
+
+http://127.0.0.1:3100
+
+
+九、停止 QQF
+
+在运行 QQF 的 PowerShell 窗口中按 Ctrl+C。

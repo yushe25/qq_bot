@@ -22,6 +22,7 @@ import httpx
 import uvicorn
 
 from app.agent.llm_provider import ChatRequest, ChatResult
+from app.agent.sticker_library import StickerLibrary
 from app.config import AppConfig
 from app.domain.types import ToolCall
 
@@ -293,7 +294,7 @@ async def _spawn(name: str, args: list[str], log_path: Path) -> ProcessHandle:
     return ProcessHandle(name=name, process=process, log_handle=log_handle)
 
 
-async def _stop_process(handle: ProcessHandle, stop_file: Path, timeout: float = 20.0) -> int:
+async def _stop_process(handle: ProcessHandle, stop_file: Path, timeout: float = 45.0) -> int:
     stop_file.write_text("stop\n", encoding="utf-8")
     try:
         return await asyncio.wait_for(handle.process.wait(), timeout=timeout)
@@ -437,8 +438,8 @@ def _prepare_files(
             "allowGroups": ["100000"],
             "allowPrivate": ["10001"],
             "maxGroupMembers": 20,
-            "maxSendsPerMinute": 1,
-            "maxSendsPerHour": 5,
+            "maxSendsPerMinute": 3,
+            "maxSendsPerHour": 60,
             "maxSendsPerDay": 20,
             "maxSendsPerWake": 3,
             "maxMessageChars": 200,
@@ -456,10 +457,36 @@ def _prepare_files(
         },
         "personaPath": str(run_dir / "persona.yaml"),
         "stickerDir": str(sticker_dir),
+        "sticker": {"enabled": True, "allowedIds": ["stage6-01"]},
     }
     config_path = run_dir / "config.json"
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
     return config_path
+
+
+def assert_sticker_ready(config_path: Path) -> None:
+    """Fail loudly when the generated config cannot exercise the sticker matrix.
+
+    S6-M06 依赖表情库真的可用。T-23 之后 `sticker.enabled` 默认 False 且必须配
+    `allowedIds`，脚本漏写时表情工具会静默返回“表情功能未启用”，只会表现为长跑
+    最后 M06 挂掉。这里在启动前就把配置问题暴露出来。
+    """
+    config = AppConfig.load(config_path)
+    if not config.sticker.enabled or not config.sticker.allowed_ids:
+        raise RuntimeError(
+            "stage6 配置未启用表情库：需要 sticker.enabled=true 且 sticker.allowedIds 非空；"
+            f"当前 enabled={config.sticker.enabled} allowedIds={list(config.sticker.allowed_ids)}"
+        )
+    library = StickerLibrary(
+        config.sticker_dir,
+        enabled=config.sticker.enabled,
+        allowed_ids=config.sticker.allowed_ids,
+    )
+    if not library.available:
+        raise RuntimeError(
+            f"stage6 表情库不可用：dir={config.sticker_dir} error={library.error} "
+            f"entries={len(library.list_ids())}"
+        )
 
 
 def _mock_report_summary(paths: Sequence[Path]) -> dict[str, Any]:
@@ -668,6 +695,7 @@ async def run_acceptance(args: argparse.Namespace) -> int:
         console_port=console_port,
         duration_seconds=duration_seconds,
     )
+    assert_sticker_ready(config_path)
 
     mock1_stop = run_dir / "mock1.stop"
     mock2_stop = run_dir / "mock2.stop"

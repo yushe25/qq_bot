@@ -55,7 +55,7 @@
     "normalQuietWindowMs": 4000,
     "normalMaxWaitMs": 10000,
     "initialReasoningEffort": "none",
-    "toolReasoningEffort": "minimal",
+    "toolReasoningEffort": "none",
     "wakeProbability": 0.04,
     "mentionDiveProbability": 0.05,
     "names": ["小皮"],

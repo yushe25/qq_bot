@@ -4,6 +4,8 @@ import json
 import sqlite3
 from typing import Any
 
+import pytest
+
 from app.agent.llm_provider import ChatRequest
 from scripts.mock_qq_server import MockOneBot
 from scripts.stage6_acceptance import (
@@ -12,6 +14,7 @@ from scripts.stage6_acceptance import (
     _evaluate_acceptance,
     _snapshot_database,
     _table_summary,
+    assert_sticker_ready,
 )
 
 
@@ -103,6 +106,10 @@ def test_stage6_mock_event_matrix_is_deterministic() -> None:
         "group",
     ]
     assert [item[1]["message_id"] for item in first] == [item[1]["message_id"] for item in second]
+    # 重放必须可被去重：拍一拍的事件指纹包含 time，两次生成必须完全一致，
+    # 否则重启后重放会当成新事件再唤醒一次（S6-R07）。
+    assert first[2][0] == "M03_POKE"
+    assert first[2][1]["time"] == second[2][1]["time"]
 
 
 def test_database_snapshot_and_table_compare_detect_changes(tmp_path) -> None:
@@ -174,6 +181,67 @@ def test_acceptance_evaluation_returns_failed_checks() -> None:
 
     assert overall_pass is False
     assert failed == ["S6-R06", "S6-R07"]
+
+
+def _write_stage6_assets(root: Any, *, with_manifest: bool = True) -> Any:
+    sticker_dir = root / "stickers"
+    image_dir = sticker_dir / "images"
+    image_dir.mkdir(parents=True, exist_ok=True)
+    (image_dir / "stage6-01.gif").write_bytes(b"GIF89a\x01\x00\x01\x00\x00\x00\x00")
+    if with_manifest:
+        (sticker_dir / "manifest.yaml").write_text(
+            "- id: stage6-01\n"
+            "  name: Stage 6\n"
+            "  file: images/stage6-01.gif\n"
+            "  tags: [acceptance]\n"
+            "  approved: true\n"
+            "  usage_count: 0\n",
+            encoding="utf-8",
+        )
+    return sticker_dir
+
+
+def test_stage6_acceptance_config_must_enable_sticker_library(tmp_path: Any) -> None:
+    """S6-M06 曾经因为脚本没写 sticker 块而假失败：默认 enabled=false 只是静默跳过。"""
+    sticker_dir = _write_stage6_assets(tmp_path)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(json.dumps({"stickerDir": str(sticker_dir)}), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="未启用表情库"):
+        assert_sticker_ready(config_path)
+
+
+def test_stage6_acceptance_config_must_resolve_manifest(tmp_path: Any) -> None:
+    sticker_dir = _write_stage6_assets(tmp_path, with_manifest=False)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "stickerDir": str(sticker_dir),
+                "sticker": {"enabled": True, "allowedIds": ["stage6-01"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="表情库不可用"):
+        assert_sticker_ready(config_path)
+
+
+def test_stage6_acceptance_config_passes_with_enabled_allowlisted_sticker(tmp_path: Any) -> None:
+    sticker_dir = _write_stage6_assets(tmp_path)
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "stickerDir": str(sticker_dir),
+                "sticker": {"enabled": True, "allowedIds": ["stage6-01"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert_sticker_ready(config_path)
 
 
 def _passing_summary() -> dict[str, Any]:
